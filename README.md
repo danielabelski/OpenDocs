@@ -198,6 +198,43 @@ opendocs diff committed.md generated.md --fail-on-change
 The summary also reports which output formats are worth regenerating, so a
 docs pipeline can rebuild only what the change actually affects.
 
+### What Isn't Documented
+
+`opendocs lint` checks the quality of what your docs *say*. `opendocs coverage`
+reports what they *miss*, by comparing the real API surface against what the
+documentation actually mentions:
+
+```bash
+opendocs coverage .                          # report
+opendocs coverage . --show-missing           # list every gap
+opendocs coverage . --fail-under 80          # CI gate
+opendocs coverage . --json                   # machine-readable
+opendocs coverage . --docs README.md --docs docs/guide.md
+```
+
+```
+Dimension              Covered  Total  Coverage
+docstrings:functions        87     88     98.9%
+docstrings:classes         185    187     98.9%
+env-vars                     4      7     57.1%
+cli-flags                   41     76     53.9%
+tech-stack                   4     14     28.6%
+  Overall: 86.3%
+```
+
+Four dimensions are scored, each chosen because it has an objective answer:
+docstrings on public symbols, environment variables the code reads, CLI flags
+it defines, and detected technologies. Test files and private helpers are
+excluded by default (`--include-tests`, `--include-private` to include them),
+and the overall figure is weighted by item count so a single missed flag does
+not outweigh hundreds of documented symbols.
+
+It deliberately does not judge whether prose is *good* — that is not
+objectively measurable, and a score nobody can verify is worse than none.
+
+Everything runs offline with no LLM. Exit codes: `0` pass, `1` below
+`--fail-under`, `2` analysis failed.
+
 ### Linting Documentation in CI
 
 `opendocs lint` checks documentation quality and exits non-zero when it
@@ -306,6 +343,10 @@ export OPENDOCS_MERMAID_BACKEND=none   # auto | mmdc | ink | none
 | `OPENDOCS_MERMAID_BACKEND` | Diagram backend: `auto` (default), `mmdc`, `ink`, or `none` to disable |
 | `OPENDOCS_VIS_NETWORK_JS` | Path to a local vis-network bundle for `--embed-graph-assets` |
 | `OPENDOCS_CACHE_DIR` | Override the asset cache location (default `~/.cache/opendocs`) |
+| `OPENDOCS_LLM_CACHE` | Set to `0` to disable LLM response caching |
+| `OPENDOCS_MODEL_CACHE` | Where local SLM weights are cached (`--provider slm`) |
+| `AZURE_OPENAI_ENDPOINT` | Azure endpoint URL (`--provider azure`) |
+| `AZURE_OPENAI_API_VERSION` | Azure API version (`--provider azure`) |
 
 ### Jupyter Notebook Ingestion
 
