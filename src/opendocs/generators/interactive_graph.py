@@ -10,10 +10,14 @@ from __future__ import annotations
 
 import html
 import json
+import logging
 from pathlib import Path
 
 from ..core.knowledge_graph import EntityType, KnowledgeGraph, Relation
 from ..core.models import DocumentModel, GenerationResult, OutputFormat
+from .graph_assets import VIS_NETWORK_URL, escape_for_inline_script, resolve_vis_network
+
+logger = logging.getLogger(__name__)
 
 # -- Colour palette per entity type (hex) --------------------------------
 
@@ -64,6 +68,8 @@ def generate_interactive_graph(
     doc: DocumentModel,
     kg: KnowledgeGraph,
     output_dir: Path,
+    *,
+    embed_assets: bool = False,
 ) -> GenerationResult:
     """Build an interactive HTML graph and write it to *output_dir*.
 
@@ -75,6 +81,10 @@ def generate_interactive_graph(
         Populated knowledge graph.
     output_dir
         Directory where ``graph.html`` will be written.
+    embed_assets
+        Inline vis-network into the page instead of linking the CDN, so the
+        result renders without network access.  Adds roughly 700 KB to the
+        file; the library is cached after the first fetch.
 
     Returns
     -------
@@ -83,10 +93,11 @@ def generate_interactive_graph(
     name = doc.metadata.repo_name or "project"
     safe = "".join(c if c.isalnum() or c in "-_ " else "_" for c in name)
     safe = safe.strip().replace(" ", "_")[:80] or "project"
-    output_path = output_dir / f"{safe}_graph.html"
+    output_path = Path(output_dir) / f"{safe}_graph.html"
 
     try:
-        html_content = _build_html(kg, name)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        html_content = _build_html(kg, name, embed_assets=embed_assets)
         output_path.write_text(html_content, encoding="utf-8")
         return GenerationResult(
             format=OutputFormat.ARCHITECTURE,
@@ -246,8 +257,26 @@ def _provenance_stats(kg: KnowledgeGraph) -> tuple[int, int, int]:
     return ext, inf, amb
 
 
-def _build_html(kg: KnowledgeGraph, project_name: str) -> str:
-    """Assemble the full self-contained HTML page."""
+def _vis_network_tag(embed_assets: bool) -> str:
+    """Return the ``<script>`` element that provides vis-network.
+
+    When *embed_assets* is set the library is inlined so the page renders with
+    no network access; if it cannot be obtained we fall back to the CDN rather
+    than emitting a page that does not work at all.
+    """
+    if not embed_assets:
+        return f'<script src="{VIS_NETWORK_URL}"></script>'
+
+    source = resolve_vis_network()
+    if source is None:
+        logger.warning("Could not embed vis-network; falling back to the CDN. The page will need network access.")
+        return f'<script src="{VIS_NETWORK_URL}"></script>'
+
+    return f"<script>{escape_for_inline_script(source)}</script>"
+
+
+def _build_html(kg: KnowledgeGraph, project_name: str, *, embed_assets: bool = False) -> str:
+    """Assemble the full HTML page."""
     nodes_json = _build_nodes_json(kg)
     edges_json = _build_edges_json(kg)
     god_json = _god_nodes_json(kg)
@@ -258,6 +287,7 @@ def _build_html(kg: KnowledgeGraph, project_name: str) -> str:
     prov_ext, prov_inf, prov_amb = _provenance_stats(kg)
     num_communities = max(kg.communities.values(), default=-1) + 1 if kg.communities else 0
     title = html.escape(project_name)
+    vis_network_tag = _vis_network_tag(embed_assets)
 
     return f"""<!DOCTYPE html>
 <html lang="en">
@@ -265,7 +295,7 @@ def _build_html(kg: KnowledgeGraph, project_name: str) -> str:
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1"/>
 <title>{title} Knowledge Graph</title>
-<script src="https://unpkg.com/vis-network@9.1.9/standalone/umd/vis-network.min.js"></script>
+{vis_network_tag}
 <style>
 *{{margin:0;padding:0;box-sizing:border-box}}
 body{{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#0f172a;color:#e2e8f0;overflow:hidden}}

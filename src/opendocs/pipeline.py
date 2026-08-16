@@ -89,6 +89,7 @@ class Pipeline:
         template_vars: TemplateVars | None = None,
         config_path: str | None = None,
         include_outputs: bool = True,
+        embed_graph_assets: bool = False,
     ) -> PipelineResult:
         """Run the full pipeline.
 
@@ -225,6 +226,7 @@ class Pipeline:
             model=model,
             base_url=base_url,
             provider=provider,
+            embed_graph_assets=embed_graph_assets,
         )
 
     # ------------------------------------------------------------------
@@ -245,6 +247,7 @@ class Pipeline:
         provider: str = "openai",
         template_vars: TemplateVars | None = None,
         config_path: str | None = None,
+        embed_graph_assets: bool = False,
     ) -> PipelineResult:
         """Merge all .md/.ipynb files in *folder* and run the full pipeline.
 
@@ -322,6 +325,7 @@ class Pipeline:
             model=model,
             base_url=base_url,
             provider=provider,
+            embed_graph_assets=embed_graph_assets,
         )
 
     # ------------------------------------------------------------------
@@ -341,6 +345,7 @@ class Pipeline:
         adapter_path: str | None = None,
         template_vars: TemplateVars | None = None,
         config_path: str | None = None,
+        embed_graph_assets: bool = False,
     ) -> PipelineResult:
         """Analyze a codebase directory and generate documentation.
 
@@ -504,6 +509,7 @@ class Pipeline:
             model=model,
             base_url=base_url,
             provider=provider,
+            embed_graph_assets=embed_graph_assets,
         )
 
     # ------------------------------------------------------------------
@@ -522,6 +528,7 @@ class Pipeline:
         model: str = "gpt-4o-mini",
         base_url: str | None = None,
         provider: str = "openai",
+        embed_graph_assets: bool = False,
     ) -> PipelineResult:
         """Run pipeline steps 2b–end on an already-parsed ``DocumentModel``."""
 
@@ -675,7 +682,7 @@ class Pipeline:
             from .generators.interactive_graph import generate_interactive_graph
 
             console.print("[bold blue]Generating Interactive Graph (HTML)...[/]")
-            graph_result = generate_interactive_graph(doc, kg, output_path)
+            graph_result = generate_interactive_graph(doc, kg, output_path, embed_assets=embed_graph_assets)
             result.results.append(graph_result)
             if graph_result.success:
                 console.print(f"[green][OK][/] {graph_result.output_path}")

@@ -151,6 +151,12 @@ def main():
     help="Include cell outputs when parsing Jupyter Notebooks (default: yes).",
 )
 @click.option(
+    "--embed-graph-assets",
+    is_flag=True,
+    default=False,
+    help="Inline vis-network into the interactive graph so it renders offline (~700 KB larger).",
+)
+@click.option(
     "--folder-recursive/--no-folder-recursive",
     "folder_recursive",
     default=True,
@@ -227,6 +233,7 @@ def generate(
     department: str | None,
     confidentiality: str | None,
     include_outputs: bool,
+    embed_graph_assets: bool,
     folder_recursive: bool,
     folder_title: str | None,
     notion_page_id: str | None,
@@ -292,6 +299,7 @@ def generate(
             sort_tables=sort_tables,
             provider=llm_provider,
             template_vars=tvars,
+            embed_graph_assets=embed_graph_assets,
         )
     else:
         result = pipeline.run(
@@ -308,6 +316,7 @@ def generate(
             provider=llm_provider,
             template_vars=tvars,
             include_outputs=include_outputs,
+            embed_graph_assets=embed_graph_assets,
         )
 
     # ---- AI Reader files summary ------------------------------------

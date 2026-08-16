@@ -129,6 +129,36 @@ opendocs generate ./README.md --local --mode llm --provider anthropic
 opendocs themes
 ```
 
+### Offline / Air-Gapped Use
+
+The interactive knowledge graph normally loads vis.js from a CDN. To produce a
+page that renders with no network access at all:
+
+```bash
+opendocs generate ./README.md --local --embed-graph-assets
+```
+
+The library is downloaded once and cached (`~/.cache/opendocs`), so subsequent
+runs need no network. On a fully air-gapped machine, supply it yourself:
+
+```bash
+export OPENDOCS_VIS_NETWORK_JS=/path/to/vis-network.min.js
+opendocs generate ./README.md --local --embed-graph-assets
+```
+
+Diagram rendering can be disabled the same way, which also makes builds fully
+offline and much faster:
+
+```bash
+export OPENDOCS_MERMAID_BACKEND=none   # auto | mmdc | ink | none
+```
+
+| Variable | Purpose |
+|----------|---------|
+| `OPENDOCS_MERMAID_BACKEND` | Diagram backend: `auto` (default), `mmdc`, `ink`, or `none` to disable |
+| `OPENDOCS_VIS_NETWORK_JS` | Path to a local vis-network bundle for `--embed-graph-assets` |
+| `OPENDOCS_CACHE_DIR` | Override the asset cache location (default `~/.cache/opendocs`) |
+
 ### Jupyter Notebook Ingestion
 
 Generate polished reports from research notebooks and data-science projects:
@@ -316,7 +346,7 @@ pipeline.run(
 ## Features
 
 - **15 Output Formats** -- Word, PDF, PPTX, Blog Post, Jira Tickets, Changelog, LaTeX Paper, One-Pager PDF, Social Cards, FAQ, Architecture Diagrams, Mindmap, Interactive Graph, Graph JSON, Knowledge Wiki
-- **Interactive Knowledge Graph** -- Single-file HTML visualization with search, legend, community clusters, god nodes, surprising connections, provenance bar, and suggested questions (loads vis.js from a CDN, so first render needs network access)
+- **Interactive Knowledge Graph** -- Single-file HTML visualization with search, legend, community clusters, god nodes, surprising connections, provenance bar, and suggested questions. Loads vis.js from a CDN by default; pass `--embed-graph-assets` to inline it and get a page that renders fully offline
 - **Graph JSON Export** -- Persistent queryable `graph.json` with nodes, edges, communities, provenance labels, god nodes, surprising connections, and suggested questions
 - **Knowledge Wiki** -- Wikipedia-style inter-linked Markdown articles (one per community) with navigable index and full entity catalog
 - **Community Detection** -- Label propagation algorithm groups entities into clusters by edge density (zero external dependencies)
