@@ -206,14 +206,68 @@ _LICENSES: dict[str, str] = {
 # ---------------------------------------------------------------------------
 
 _VERSION_RE = re.compile(r"(\d+\.\d+(?:\.\d+)?(?:[+-]\w+)?)")
+# Units are ordered longest-first so "30 seconds" captures "seconds" rather
+# than matching the bare "s" alternative first.  The trailing lookahead is what
+# stops a number followed by any s-word from being read as a duration: without
+# it, "12 selectable formats" and "0 sections added" both became metrics.
 _METRIC_RE = re.compile(
-    r"(\d+(?:\.\d+)?)\s*(%|ms|s|sec|seconds|min|minutes|hz|Hz|MB|GB|TB|KB"
-    r"|req/s|rps|qps|tps|fps|Mbps|Gbps|rpm|k|K|M)",
+    r"(\d+(?:\.\d+)?)\s*("
+    r"seconds|minutes|req/s|Mbps|Gbps|sec|min|rpm|rps|qps|tps|fps"
+    r"|ms|Hz|hz|MB|GB|TB|KB|%|s|k|K|M"
+    r")(?![A-Za-z])",
 )
 _API_PATH_RE = re.compile(r"`?(/api/\S+|/v\d+/\S+)`?")
 _HTTP_METHOD_RE = re.compile(r"\b(GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS)\b")
 _MERMAID_EDGE_RE = re.compile(r"(\w[\w\s]*?)\s*-->?\|?([^|]*?)\|?\s*(\w[\w\s]*?)$", re.MULTILINE)
 _MERMAID_NODE_RE = re.compile(r"(\w+)\[([^\]]+)\]")
+
+
+#: Separators that divide a feature bullet's *name* from its *description*.
+#: Ordered so multi-character dashes are tried before the single hyphen, which
+#: would otherwise split hyphenated names like "Auto-PR" in half.
+_FEATURE_SEPARATORS = (" -- ", " — ", " – ", ": ", " - ", "--", "—", "–", ":")
+
+#: A feature name longer than this is prose, not a name.  The previous limit of
+#: 80 was a truncation point rather than a rejection, so whole sentences became
+#: entity names and every downstream view showed them ellipsised.
+_MAX_FEATURE_NAME = 60
+
+
+def _feature_name(text: str) -> str:
+    """Extract the short name from a feature bullet.
+
+    Feature bullets are conventionally ``Name -- description``.  Splitting only
+    on ``:`` and the typographic dashes missed the ASCII ``--`` form, so the
+    whole bullet was kept and merely truncated.  When no separator is present,
+    fall back to the first clause and then to a word-count cap, so the result is
+    always a name rather than a sentence fragment.
+    """
+    candidate = text.strip()
+
+    for separator in _FEATURE_SEPARATORS:
+        if separator in candidate:
+            head = candidate.split(separator, 1)[0].strip()
+            if 3 < len(head) <= _MAX_FEATURE_NAME:
+                return head
+            # A head that is still too long means the separator appeared late
+            # in prose rather than after a name; keep looking.
+            if head:
+                candidate = head
+            break
+
+    # No usable separator — stop at the first sentence.
+    candidate = re.split(r"(?<=[a-z0-9])\.\s", candidate)[0].strip()
+    if len(candidate) <= _MAX_FEATURE_NAME:
+        return candidate
+
+    # Still prose: keep the leading words, cutting on a word boundary.
+    words = candidate.split()
+    trimmed: list[str] = []
+    for word in words:
+        if len(" ".join(trimmed + [word])) > _MAX_FEATURE_NAME:
+            break
+        trimmed.append(word)
+    return " ".join(trimmed).rstrip(" ,;:")
 
 
 # ---------------------------------------------------------------------------
@@ -671,7 +725,7 @@ class SemanticExtractor:
                 for item in block.items[:15]:  # Cap at 15
                     # Strip bold markers, extract first meaningful phrase
                     clean = re.sub(r"\*\*([^*]+)\*\*", r"\1", item)
-                    name = clean.split(":")[0].split("—")[0].split("–")[0].strip()[:80]
+                    name = _feature_name(clean)
                     if len(name) > 3:
                         eid = self._make_id("feat", name)
                         kg.add_entity(
