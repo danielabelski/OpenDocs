@@ -43,7 +43,7 @@ OpenDocs (by [ioteverythin](https://www.ioteverythin.com/)) takes a GitHub repos
 | Knowledge Wiki | Markdown folder | Available |
 | LLM Summaries | Stakeholder views | Available |
 
-### What's New in v0.5.0
+### What's New in v0.9.0
 
 - **Interactive Knowledge Graph** -- Explorable HTML graph (vis.js) with search, filtering, god-node analysis, community clusters, provenance labels, and surprising connections
 - **Graph JSON Export** -- Persistent `graph.json` with nodes, edges, communities, provenance, god nodes, surprising connections, and suggested questions. Query weeks later without re-processing
@@ -64,7 +64,7 @@ OpenDocs (by [ioteverythin](https://www.ioteverythin.com/)) takes a GitHub repos
 
 ### 1. Pipeline (Deterministic + LLM)
 
-The core pipeline parses Markdown/Notebooks and generates all 11 output formats:
+The core pipeline parses Markdown/Notebooks and generates all 12 selectable output formats:
 
 - **Basic mode** -- Pure Markdown AST parsing, no LLM required. Fast, free, predictable.
 - **LLM mode** -- Uses any supported LLM provider to extract entities, build knowledge graphs, and generate executive summaries + stakeholder views (CTO, Investor, Developer).
@@ -315,8 +315,8 @@ pipeline.run(
 
 ## Features
 
-- **15 Output Formats** -- Word, PDF, PPTX, Blog Post, Jira Tickets, Changelog, LaTeX Paper, One-Pager PDF, Social Cards, FAQ, Architecture Diagrams, Interactive Graph, Graph JSON, Knowledge Wiki
-- **Interactive Knowledge Graph** -- Self-contained HTML visualization (vis.js) with search, legend, community clusters, god nodes, surprising connections, provenance bar, and suggested questions
+- **15 Output Formats** -- Word, PDF, PPTX, Blog Post, Jira Tickets, Changelog, LaTeX Paper, One-Pager PDF, Social Cards, FAQ, Architecture Diagrams, Mindmap, Interactive Graph, Graph JSON, Knowledge Wiki
+- **Interactive Knowledge Graph** -- Single-file HTML visualization with search, legend, community clusters, god nodes, surprising connections, provenance bar, and suggested questions (loads vis.js from a CDN, so first render needs network access)
 - **Graph JSON Export** -- Persistent queryable `graph.json` with nodes, edges, communities, provenance labels, god nodes, surprising connections, and suggested questions
 - **Knowledge Wiki** -- Wikipedia-style inter-linked Markdown articles (one per community) with navigable index and full entity catalog
 - **Community Detection** -- Label propagation algorithm groups entities into clusters by edge density (zero external dependencies)

@@ -358,7 +358,13 @@ class LatexGenerator(BaseGenerator):
     @staticmethod
     def _escape(text: str) -> str:
         """Escape special LaTeX characters."""
+        # Backslash must go first: every replacement below introduces one, so
+        # escaping it later would corrupt them all.  It maps to a placeholder
+        # rather than \textbackslash{} directly, because that expansion itself
+        # contains braces which the "{"/"}" rules would then double-escape.
+        _BACKSLASH = "\x00opendocs-backslash\x00"
         replacements = {
+            "\\": _BACKSLASH,
             "&": r"\&",
             "%": r"\%",
             "$": r"\$",
@@ -371,7 +377,7 @@ class LatexGenerator(BaseGenerator):
         }
         for char, replacement in replacements.items():
             text = text.replace(char, replacement)
-        return text
+        return text.replace(_BACKSLASH, r"\textbackslash{}")
 
     @staticmethod
     def _latex_lang(lang: str) -> str:

@@ -1,8 +1,9 @@
 """Generate an interactive HTML knowledge-graph visualisation.
 
-Produces a self-contained HTML file powered by vis-network (CDN) that
-lets users pan, zoom, click nodes, search, and filter by entity type.
-No local JavaScript toolchain is required.
+Produces a single HTML file powered by vis-network that lets users pan,
+zoom, click nodes, search, and filter by entity type.  No local JavaScript
+toolchain is required, but vis-network is loaded from a CDN, so viewing the
+page needs network access.
 """
 
 from __future__ import annotations
@@ -37,6 +38,23 @@ _TYPE_COLOURS: dict[EntityType, str] = {
 }
 
 _DEFAULT_COLOUR = "#94a3b8"
+
+
+def _script_json(data) -> str:
+    """Serialise *data* as JSON that is safe to embed inside a ``<script>`` block.
+
+    Entity names come from README content (mermaid node labels, LLM output),
+    so they are untrusted.  Plain ``json.dumps`` does not escape ``/``, which
+    means a name containing ``</script>`` would terminate the script element
+    early and allow arbitrary markup to be injected into the page.
+    """
+    payload = json.dumps(data)
+    return (
+        payload.replace("</", "<\\/")
+        .replace("<!--", "<\\!--")
+        .replace("\u2028", "\\u2028")
+        .replace("\u2029", "\\u2029")
+    )
 
 
 # -- Public API -----------------------------------------------------------
@@ -122,7 +140,7 @@ def _build_nodes_json(kg: KnowledgeGraph) -> str:
                 "group": e.entity_type.value,
             }
         )
-    return json.dumps(nodes)
+    return _script_json(nodes)
 
 
 def _build_edges_json(kg: KnowledgeGraph) -> str:
@@ -146,7 +164,7 @@ def _build_edges_json(kg: KnowledgeGraph) -> str:
                 "font": {"size": 9, "color": "#94a3b8", "strokeWidth": 0},
             }
         )
-    return json.dumps(edges)
+    return _script_json(edges)
 
 
 def _god_nodes_json(kg: KnowledgeGraph, top_n: int = 5) -> str:
@@ -158,7 +176,7 @@ def _god_nodes_json(kg: KnowledgeGraph, top_n: int = 5) -> str:
         ent = kg.get_entity(eid)
         if ent:
             result.append({"name": ent.name, "type": ent.entity_type.value, "degree": deg})
-    return json.dumps(result)
+    return _script_json(result)
 
 
 def _surprising_connections_json(kg: KnowledgeGraph, top_n: int = 5) -> str:
@@ -190,7 +208,7 @@ def _surprising_connections_json(kg: KnowledgeGraph, top_n: int = 5) -> str:
                     "score": round(score, 2),
                 }
             )
-    return json.dumps(result)
+    return _script_json(result)
 
 
 def _legend_items(kg: KnowledgeGraph) -> str:
@@ -212,12 +230,12 @@ def _legend_items(kg: KnowledgeGraph) -> str:
 def _communities_json(kg: KnowledgeGraph) -> str:
     """Build community summaries as JSON for the sidebar."""
     summaries = kg.community_summary()
-    return json.dumps(summaries)
+    return _script_json(summaries)
 
 
 def _questions_json(kg: KnowledgeGraph) -> str:
     """Build suggested questions as JSON."""
-    return json.dumps(kg.suggested_questions(top_n=5))
+    return _script_json(kg.suggested_questions(top_n=5))
 
 
 def _provenance_stats(kg: KnowledgeGraph) -> tuple[int, int, int]:
@@ -339,12 +357,22 @@ var network = new vis.Network(container, {{nodes: nodesData, edges: edgesData}},
   layout: {{improvedLayout: true}}
 }});
 
+// Entity names originate from README content, so escape before any innerHTML use.
+function esc(v) {{
+  return String(v)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}}
+
 // God nodes panel
 var gp = document.getElementById('god-nodes');
 godNodes.forEach(function(g) {{
   var d = document.createElement('div');
   d.className = 'panel-card';
-  d.innerHTML = '<h4>' + g.name + '</h4><span class="badge">' + g.type.replace(/_/g,' ') + '</span> <span>Degree: ' + g.degree + '</span>';
+  d.innerHTML = '<h4>' + esc(g.name) + '</h4><span class="badge">' + esc(g.type.replace(/_/g,' ')) + '</span> <span>Degree: ' + esc(g.degree) + '</span>';
   gp.appendChild(d);
 }});
 
@@ -353,7 +381,7 @@ var sp = document.getElementById('surprises');
 surprises.forEach(function(s) {{
   var d = document.createElement('div');
   d.className = 'panel-card';
-  d.innerHTML = '<h4>' + s.source + ' \\u2194 ' + s.target + '</h4><p>' + s.relation.replace(/_/g,' ') + ' <span class="badge">score ' + s.score + '</span></p>';
+  d.innerHTML = '<h4>' + esc(s.source) + ' \\u2194 ' + esc(s.target) + '</h4><p>' + esc(s.relation.replace(/_/g,' ')) + ' <span class="badge">score ' + esc(s.score) + '</span></p>';
   sp.appendChild(d);
 }});
 
@@ -362,9 +390,9 @@ var cp = document.getElementById('communities');
 communities.forEach(function(c) {{
   var d = document.createElement('div');
   d.className = 'panel-card';
-  var members = c.members.slice(0,3).join(', ');
+  var members = c.members.slice(0,3).map(esc).join(', ');
   if (c.members.length > 3) members += ' (+' + (c.members.length - 3) + ')';
-  d.innerHTML = '<h4>Cluster ' + c.id + ' <span class="badge">' + c.size + ' nodes</span></h4><p>' + c.dominant_type + ' | ' + c.internal_edges + ' edges | ' + members + '</p>';
+  d.innerHTML = '<h4>Cluster ' + esc(c.id) + ' <span class="badge">' + esc(c.size) + ' nodes</span></h4><p>' + esc(c.dominant_type) + ' | ' + esc(c.internal_edges) + ' edges | ' + members + '</p>';
   cp.appendChild(d);
 }});
 
@@ -373,7 +401,7 @@ var qp = document.getElementById('questions');
 questions.forEach(function(q) {{
   var d = document.createElement('div');
   d.className = 'question-card';
-  d.innerHTML = '<em>' + q + '</em>';
+  d.innerHTML = '<em>' + esc(q) + '</em>';
   qp.appendChild(d);
 }});
 

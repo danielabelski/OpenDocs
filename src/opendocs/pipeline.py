@@ -88,6 +88,7 @@ class Pipeline:
         provider: str = "openai",
         template_vars: TemplateVars | None = None,
         config_path: str | None = None,
+        include_outputs: bool = True,
     ) -> PipelineResult:
         """Run the full pipeline.
 
@@ -123,6 +124,9 @@ class Pipeline:
             Pre-built ``TemplateVars`` instance with report variables.
         config_path
             Path to a YAML/JSON config file with template variables.
+        include_outputs
+            When *source* is a Jupyter Notebook, include executed cell
+            outputs (text, images, tables) in the parsed document.
         """
         output_path = Path(output_dir).resolve()
         output_path.mkdir(parents=True, exist_ok=True)
@@ -192,6 +196,7 @@ class Pipeline:
                 repo_name=name,
                 repo_url=repo_url,
                 source_path=source,
+                include_outputs=include_outputs,
             )
         else:
             console.print("[bold blue]Parsing Markdown...[/]")

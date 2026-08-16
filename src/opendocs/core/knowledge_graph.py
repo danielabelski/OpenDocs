@@ -350,13 +350,22 @@ class KnowledgeGraph(BaseModel):
 
     # -- Community detection ---------------------------------------------
 
-    def detect_communities(self, max_iterations: int = 50) -> dict[str, int]:
+    def detect_communities(self, max_iterations: int = 50, *, seed: int = 0) -> dict[str, int]:
         """Detect communities using label propagation.
 
         A lightweight, dependency-free community detection algorithm.
         Each node starts in its own community, then iteratively adopts
         the most common community among its neighbours.  Converges
         when no labels change.
+
+        Parameters
+        ----------
+        max_iterations
+            Upper bound on propagation rounds.
+        seed
+            Seed for the shuffle that randomises visit order.  Fixed by
+            default so the exported ``graph.json`` and wiki are reproducible
+            across runs; pass a different value to sample another partition.
 
         Returns
         -------
@@ -376,10 +385,11 @@ class KnowledgeGraph(BaseModel):
         # Initialise: each node in its own community
         labels: dict[str, int] = {e.id: i for i, e in enumerate(self.entities)}
         ids = [e.id for e in self.entities]
+        rng = random.Random(seed)
 
         for _ in range(max_iterations):
             changed = False
-            random.shuffle(ids)  # randomised order for convergence
+            rng.shuffle(ids)  # randomised order for convergence
             for nid in ids:
                 nbrs = adj.get(nid, [])
                 if not nbrs:

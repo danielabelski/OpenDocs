@@ -19,8 +19,10 @@ in generated documents.
 from __future__ import annotations
 
 import base64
+import functools
 import hashlib
 import logging
+import os
 import shutil
 import subprocess
 import tempfile
@@ -74,8 +76,21 @@ def _diagram_hash(code: str) -> str:
     return hashlib.sha256(code.encode("utf-8")).hexdigest()[:12]
 
 
+#: Environment override for the rendering backend. Accepts the same values as
+#: the ``backend`` argument plus ``"none"``, which disables diagram rendering
+#: entirely.  Useful for offline builds and for test suites that must not make
+#: network calls or trigger an ``npx`` package download.
+_BACKEND_ENV_VAR = "OPENDOCS_MERMAID_BACKEND"
+
+
+@functools.lru_cache(maxsize=1)
 def _mmdc_available() -> bool:
-    """Check whether ``npx mmdc`` is available on the system."""
+    """Check whether ``npx mmdc`` is available on the system.
+
+    The result is cached for the life of the process: probing spawns ``npx``,
+    which on a cold machine downloads the mermaid-cli package (and Chromium
+    with it).  Without caching, every ``MermaidRenderer`` would pay that cost.
+    """
     if shutil.which("mmdc"):
         return True
     # Try npx
@@ -107,6 +122,9 @@ class MermaidRenderer:
     backend
         ``"auto"`` tries *mmdc* first, falls back to *mermaid.ink*.
         ``"mmdc"`` forces the CLI. ``"ink"`` forces the HTTP API.
+        ``"none"`` disables rendering (no subprocess, no network).
+        The ``OPENDOCS_MERMAID_BACKEND`` environment variable overrides
+        this argument, so offline builds and CI can opt out globally.
     theme
         Mermaid theme passed to both backends (``default``,
         ``dark``, ``forest``, ``neutral``).
@@ -115,7 +133,7 @@ class MermaidRenderer:
     def __init__(
         self,
         cache_dir: Path | None = None,
-        backend: Literal["auto", "mmdc", "ink"] = "auto",
+        backend: Literal["auto", "mmdc", "ink", "none"] = "auto",
         theme: str = "default",
     ) -> None:
         if cache_dir is None:
@@ -128,7 +146,17 @@ class MermaidRenderer:
 
         self.theme = theme
 
-        # Resolve backend
+        # Resolve backend.  The environment only overrides "auto" — that value
+        # means "pick for me", so it is the caller delegating the choice.  An
+        # explicit backend= is a deliberate decision and is always honoured.
+        if backend == "auto":
+            env_backend = os.environ.get(_BACKEND_ENV_VAR, "").strip().lower()
+            if env_backend in {"auto", "mmdc", "ink", "none"}:
+                backend = env_backend  # type: ignore[assignment]
+            elif env_backend:
+                logger.warning("Ignoring unknown %s=%r", _BACKEND_ENV_VAR, env_backend)
+
+        self._disabled = backend == "none"
         if backend == "auto":
             self._use_mmdc = _mmdc_available()
         elif backend == "mmdc":
@@ -147,6 +175,10 @@ class MermaidRenderer:
         Results are cached by content hash so duplicate diagrams are
         rendered only once.
         """
+        if self._disabled:
+            logger.debug("Mermaid rendering disabled (%s=none)", _BACKEND_ENV_VAR)
+            return None
+
         h = _diagram_hash(code)
         cached = self.cache_dir / f"mermaid_{h}.png"
         if cached.exists() and cached.stat().st_size > 0:
@@ -198,6 +230,10 @@ class MermaidRenderer:
         Returns the local path on success, or *None* on failure.
         Skips badge/shield images and SVGs that cannot be embedded.
         """
+        if self._disabled:
+            logger.debug("Image download disabled (%s=none)", _BACKEND_ENV_VAR)
+            return None
+
         # Skip badge images — they are small decorative shields
         url_lower = url.lower()
         if any(pat in url_lower for pat in self._BADGE_PATTERNS):

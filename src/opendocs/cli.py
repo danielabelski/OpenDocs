@@ -40,6 +40,13 @@ FORMAT_MAP = {
     "all": OutputFormat.ALL,
 }
 
+# Derived from FORMAT_MAP so the CLI choices can never drift out of sync with
+# the formats the pipeline actually knows how to build.
+FORMAT_CHOICES = list(FORMAT_MAP)
+
+# Every concrete format produced by `--format all`.
+ALL_FORMATS = [fmt for key, fmt in FORMAT_MAP.items() if key != "all"]
+
 
 @click.group()
 @click.version_option(version="0.9.0", prog_name="opendocs")
@@ -54,23 +61,7 @@ def main():
     "-f",
     "--format",
     "fmt",
-    type=click.Choice(
-        [
-            "word",
-            "pdf",
-            "pptx",
-            "blog",
-            "jira",
-            "changelog",
-            "latex",
-            "onepager",
-            "social",
-            "faq",
-            "architecture",
-            "all",
-        ],
-        case_sensitive=False,
-    ),
+    type=click.Choice(FORMAT_CHOICES, case_sensitive=False),
     default="all",
     help="Output format (default: all).",
 )
@@ -277,20 +268,7 @@ def generate(
     # Resolve formats
     chosen = FORMAT_MAP[fmt.lower()]
     if chosen == OutputFormat.ALL:
-        formats = [
-            OutputFormat.WORD,
-            OutputFormat.PDF,
-            OutputFormat.PPTX,
-            OutputFormat.BLOG,
-            OutputFormat.JIRA,
-            OutputFormat.CHANGELOG,
-            OutputFormat.LATEX,
-            OutputFormat.ONEPAGER,
-            OutputFormat.SOCIAL,
-            OutputFormat.FAQ,
-            OutputFormat.ARCHITECTURE,
-            OutputFormat.MINDMAP,
-        ]
+        formats = list(ALL_FORMATS)
     else:
         formats = [chosen]
 
@@ -329,6 +307,7 @@ def generate(
             sort_tables=sort_tables,
             provider=llm_provider,
             template_vars=tvars,
+            include_outputs=include_outputs,
         )
 
     # ---- AI Reader files summary ------------------------------------
@@ -450,8 +429,9 @@ def inspect(source: str, local: bool, token: str | None):
     from .core.parser import ReadmeParser
 
     if is_notebook(source):
+        name = Path(source).stem
         parser = NotebookParser()
-        doc = parser.parse(source, repo_name=Path(source).stem)
+        doc = parser.parse(source, repo_name=name)
     else:
         fetcher = ReadmeFetcher(github_token=token)
         if local:
@@ -504,7 +484,7 @@ def inspect(source: str, local: bool, token: str | None):
     "--branch",
     "branch_name",
     default="docs/auto-update",
-    help="Base branch name for auto-PR (default: docs/auto-update).",
+    help="Branch-name prefix for auto-PR; a UTC timestamp is appended (default: docs/auto-update).",
 )
 @click.option(
     "--patterns",
@@ -515,23 +495,7 @@ def inspect(source: str, local: bool, token: str | None):
     "-f",
     "--format",
     "fmt",
-    type=click.Choice(
-        [
-            "word",
-            "pdf",
-            "pptx",
-            "blog",
-            "jira",
-            "changelog",
-            "latex",
-            "onepager",
-            "social",
-            "faq",
-            "architecture",
-            "all",
-        ],
-        case_sensitive=False,
-    ),
+    type=click.Choice(FORMAT_CHOICES, case_sensitive=False),
     default="all",
     help="Output format (default: all).",
 )
@@ -643,23 +607,7 @@ def _add_section_tree(parent, section):
     "-f",
     "--format",
     "fmt",
-    type=click.Choice(
-        [
-            "word",
-            "pdf",
-            "pptx",
-            "blog",
-            "jira",
-            "changelog",
-            "latex",
-            "onepager",
-            "social",
-            "faq",
-            "architecture",
-            "all",
-        ],
-        case_sensitive=False,
-    ),
+    type=click.Choice(FORMAT_CHOICES, case_sensitive=False),
     default="all",
     help="Output format (default: all).",
 )
@@ -783,20 +731,7 @@ def codebase(
     # Resolve formats
     chosen = FORMAT_MAP[fmt.lower()]
     if chosen == OutputFormat.ALL:
-        formats = [
-            OutputFormat.WORD,
-            OutputFormat.PDF,
-            OutputFormat.PPTX,
-            OutputFormat.BLOG,
-            OutputFormat.JIRA,
-            OutputFormat.CHANGELOG,
-            OutputFormat.LATEX,
-            OutputFormat.ONEPAGER,
-            OutputFormat.SOCIAL,
-            OutputFormat.FAQ,
-            OutputFormat.ARCHITECTURE,
-            OutputFormat.MINDMAP,
-        ]
+        formats = list(ALL_FORMATS)
     else:
         formats = [chosen]
 
