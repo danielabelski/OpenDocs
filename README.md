@@ -129,6 +129,28 @@ opendocs generate ./README.md --local --mode llm --provider anthropic
 opendocs themes
 ```
 
+### Incremental Builds
+
+Generated artifacts are cached by content, so re-running the pipeline only
+rebuilds what actually changed. This matters most for `opendocs watch`, which
+otherwise regenerates every format on every save.
+
+```bash
+opendocs generate ./README.md --local              # cached automatically
+opendocs generate ./README.md --local --no-cache   # force a full rebuild
+opendocs generate ./README.md --local --cache-dir /tmp/od-cache
+
+opendocs cache            # show location, entry count, and size
+opendocs cache --clear    # empty it
+```
+
+The cache key covers the document content, the knowledge graph, the theme, the
+template variables, the output format, and the installed opendocs version, so
+changing any of them rebuilds rather than reusing. A cache hit reproduces the
+stored artifact byte for byte; the one thing it does not refresh is the
+generation timestamp, which is what makes identical inputs produce identical
+output.
+
 ### What Changed Since the Last Release
 
 `opendocs diff` compares two versions of your documentation and reports what

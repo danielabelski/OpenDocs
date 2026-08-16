@@ -157,6 +157,20 @@ def main():
     help="Inline vis-network into the interactive graph so it renders offline (~700 KB larger).",
 )
 @click.option(
+    "--no-cache",
+    "no_cache",
+    is_flag=True,
+    default=False,
+    help="Ignore the build cache and regenerate every format from scratch.",
+)
+@click.option(
+    "--cache-dir",
+    "cache_dir",
+    type=click.Path(),
+    default=None,
+    help="Where to keep cached build artifacts (default: ~/.cache/opendocs/build).",
+)
+@click.option(
     "--folder-recursive/--no-folder-recursive",
     "folder_recursive",
     default=True,
@@ -234,6 +248,8 @@ def generate(
     confidentiality: str | None,
     include_outputs: bool,
     embed_graph_assets: bool,
+    no_cache: bool,
+    cache_dir: str | None,
     folder_recursive: bool,
     folder_title: str | None,
     notion_page_id: str | None,
@@ -280,6 +296,10 @@ def generate(
         formats = [chosen]
 
     # Run pipeline — folder path or single file/URL
+    from .core.build_cache import BuildCache
+
+    build_cache = BuildCache(cache_dir, enabled=not no_cache)
+
     pipeline = Pipeline(github_token=token)
     source_path = Path(source)
 
@@ -300,6 +320,7 @@ def generate(
             provider=llm_provider,
             template_vars=tvars,
             embed_graph_assets=embed_graph_assets,
+            cache=build_cache,
         )
     else:
         result = pipeline.run(
@@ -317,6 +338,7 @@ def generate(
             template_vars=tvars,
             include_outputs=include_outputs,
             embed_graph_assets=embed_graph_assets,
+            cache=build_cache,
         )
 
     # ---- AI Reader files summary ------------------------------------
@@ -931,6 +953,34 @@ def finetune(
     except Exception as exc:
         console.print(f"[bold red]Fine-tuning failed:[/] {exc}")
         raise SystemExit(1)
+
+
+@main.command()
+@click.option("--clear", "do_clear", is_flag=True, default=False, help="Delete every cached artifact.")
+@click.option("--cache-dir", "cache_dir", type=click.Path(), default=None, help="Cache location to inspect.")
+def cache(do_clear: bool, cache_dir: str | None):
+    """Inspect or clear the incremental build cache.
+
+    \b
+    Examples:
+      opendocs cache            # show location and size
+      opendocs cache --clear    # empty it
+    """
+    from .core.build_cache import BuildCache
+
+    store = BuildCache(cache_dir)
+
+    if do_clear:
+        removed = store.clear()
+        console.print(f"[green][OK][/] Cleared {removed} cached artifact(s) from {store.dir}")
+        return
+
+    size = store.size_bytes()
+    entries = len(list(store.dir.glob("*/*/manifest.json"))) if store.dir.exists() else 0
+    console.print(f"\n[bold]Build cache[/] [dim]{store.dir}[/]")
+    console.print(f"  entries: {entries}")
+    console.print(f"  size:    {size / 1024 / 1024:.1f} MB" if size else "  size:    empty")
+    console.print("\n[dim]Clear it with `opendocs cache --clear`.[/]\n")
 
 
 @main.command()

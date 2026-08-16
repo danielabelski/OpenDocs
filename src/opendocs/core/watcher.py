@@ -334,6 +334,7 @@ def _regenerate(
     model: str = "gpt-4o-mini",
     provider: str = "openai",
     config_path: str | None = None,
+    use_cache: bool = True,
 ) -> bool:
     """Regenerate documentation for changed files.
 
@@ -361,6 +362,11 @@ def _regenerate(
     if formats:
         out_formats = [format_map[f] for f in formats if f in format_map]
 
+    # The watcher is the main reason the build cache exists: it re-runs the
+    # pipeline on every change, and most formats are usually unaffected.
+    from ..core.build_cache import BuildCache
+
+    build_cache = BuildCache(enabled=use_cache)
     pipeline = Pipeline()
     success = True
 
@@ -379,6 +385,7 @@ def _regenerate(
                 api_key=api_key,
                 model=model,
                 provider=provider,
+                cache=build_cache,
             )
 
             if not any(r.success for r in result.results):
