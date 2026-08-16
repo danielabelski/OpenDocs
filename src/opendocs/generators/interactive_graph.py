@@ -1,18 +1,23 @@
 """Generate an interactive HTML knowledge-graph visualisation.
 
-Produces a self-contained HTML file powered by vis-network (CDN) that
-lets users pan, zoom, click nodes, search, and filter by entity type.
-No local JavaScript toolchain is required.
+Produces a single HTML file powered by vis-network that lets users pan,
+zoom, click nodes, search, and filter by entity type.  No local JavaScript
+toolchain is required, but vis-network is loaded from a CDN, so viewing the
+page needs network access.
 """
 
 from __future__ import annotations
 
 import html
 import json
+import logging
 from pathlib import Path
 
 from ..core.knowledge_graph import EntityType, KnowledgeGraph, Relation
 from ..core.models import DocumentModel, GenerationResult, OutputFormat
+from .graph_assets import VIS_NETWORK_URL, escape_for_inline_script, resolve_vis_network
+
+logger = logging.getLogger(__name__)
 
 # -- Colour palette per entity type (hex) --------------------------------
 
@@ -39,6 +44,23 @@ _TYPE_COLOURS: dict[EntityType, str] = {
 _DEFAULT_COLOUR = "#94a3b8"
 
 
+def _script_json(data) -> str:
+    """Serialise *data* as JSON that is safe to embed inside a ``<script>`` block.
+
+    Entity names come from README content (mermaid node labels, LLM output),
+    so they are untrusted.  Plain ``json.dumps`` does not escape ``/``, which
+    means a name containing ``</script>`` would terminate the script element
+    early and allow arbitrary markup to be injected into the page.
+    """
+    payload = json.dumps(data)
+    return (
+        payload.replace("</", "<\\/")
+        .replace("<!--", "<\\!--")
+        .replace("\u2028", "\\u2028")
+        .replace("\u2029", "\\u2029")
+    )
+
+
 # -- Public API -----------------------------------------------------------
 
 
@@ -46,6 +68,8 @@ def generate_interactive_graph(
     doc: DocumentModel,
     kg: KnowledgeGraph,
     output_dir: Path,
+    *,
+    embed_assets: bool = False,
 ) -> GenerationResult:
     """Build an interactive HTML graph and write it to *output_dir*.
 
@@ -57,6 +81,10 @@ def generate_interactive_graph(
         Populated knowledge graph.
     output_dir
         Directory where ``graph.html`` will be written.
+    embed_assets
+        Inline vis-network into the page instead of linking the CDN, so the
+        result renders without network access.  Adds roughly 700 KB to the
+        file; the library is cached after the first fetch.
 
     Returns
     -------
@@ -65,10 +93,11 @@ def generate_interactive_graph(
     name = doc.metadata.repo_name or "project"
     safe = "".join(c if c.isalnum() or c in "-_ " else "_" for c in name)
     safe = safe.strip().replace(" ", "_")[:80] or "project"
-    output_path = output_dir / f"{safe}_graph.html"
+    output_path = Path(output_dir) / f"{safe}_graph.html"
 
     try:
-        html_content = _build_html(kg, name)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        html_content = _build_html(kg, name, embed_assets=embed_assets)
         output_path.write_text(html_content, encoding="utf-8")
         return GenerationResult(
             format=OutputFormat.ARCHITECTURE,
@@ -122,7 +151,7 @@ def _build_nodes_json(kg: KnowledgeGraph) -> str:
                 "group": e.entity_type.value,
             }
         )
-    return json.dumps(nodes)
+    return _script_json(nodes)
 
 
 def _build_edges_json(kg: KnowledgeGraph) -> str:
@@ -146,7 +175,7 @@ def _build_edges_json(kg: KnowledgeGraph) -> str:
                 "font": {"size": 9, "color": "#94a3b8", "strokeWidth": 0},
             }
         )
-    return json.dumps(edges)
+    return _script_json(edges)
 
 
 def _god_nodes_json(kg: KnowledgeGraph, top_n: int = 5) -> str:
@@ -158,7 +187,7 @@ def _god_nodes_json(kg: KnowledgeGraph, top_n: int = 5) -> str:
         ent = kg.get_entity(eid)
         if ent:
             result.append({"name": ent.name, "type": ent.entity_type.value, "degree": deg})
-    return json.dumps(result)
+    return _script_json(result)
 
 
 def _surprising_connections_json(kg: KnowledgeGraph, top_n: int = 5) -> str:
@@ -190,7 +219,7 @@ def _surprising_connections_json(kg: KnowledgeGraph, top_n: int = 5) -> str:
                     "score": round(score, 2),
                 }
             )
-    return json.dumps(result)
+    return _script_json(result)
 
 
 def _legend_items(kg: KnowledgeGraph) -> str:
@@ -212,12 +241,12 @@ def _legend_items(kg: KnowledgeGraph) -> str:
 def _communities_json(kg: KnowledgeGraph) -> str:
     """Build community summaries as JSON for the sidebar."""
     summaries = kg.community_summary()
-    return json.dumps(summaries)
+    return _script_json(summaries)
 
 
 def _questions_json(kg: KnowledgeGraph) -> str:
     """Build suggested questions as JSON."""
-    return json.dumps(kg.suggested_questions(top_n=5))
+    return _script_json(kg.suggested_questions(top_n=5))
 
 
 def _provenance_stats(kg: KnowledgeGraph) -> tuple[int, int, int]:
@@ -228,8 +257,26 @@ def _provenance_stats(kg: KnowledgeGraph) -> tuple[int, int, int]:
     return ext, inf, amb
 
 
-def _build_html(kg: KnowledgeGraph, project_name: str) -> str:
-    """Assemble the full self-contained HTML page."""
+def _vis_network_tag(embed_assets: bool) -> str:
+    """Return the ``<script>`` element that provides vis-network.
+
+    When *embed_assets* is set the library is inlined so the page renders with
+    no network access; if it cannot be obtained we fall back to the CDN rather
+    than emitting a page that does not work at all.
+    """
+    if not embed_assets:
+        return f'<script src="{VIS_NETWORK_URL}"></script>'
+
+    source = resolve_vis_network()
+    if source is None:
+        logger.warning("Could not embed vis-network; falling back to the CDN. The page will need network access.")
+        return f'<script src="{VIS_NETWORK_URL}"></script>'
+
+    return f"<script>{escape_for_inline_script(source)}</script>"
+
+
+def _build_html(kg: KnowledgeGraph, project_name: str, *, embed_assets: bool = False) -> str:
+    """Assemble the full HTML page."""
     nodes_json = _build_nodes_json(kg)
     edges_json = _build_edges_json(kg)
     god_json = _god_nodes_json(kg)
@@ -240,6 +287,7 @@ def _build_html(kg: KnowledgeGraph, project_name: str) -> str:
     prov_ext, prov_inf, prov_amb = _provenance_stats(kg)
     num_communities = max(kg.communities.values(), default=-1) + 1 if kg.communities else 0
     title = html.escape(project_name)
+    vis_network_tag = _vis_network_tag(embed_assets)
 
     return f"""<!DOCTYPE html>
 <html lang="en">
@@ -247,7 +295,7 @@ def _build_html(kg: KnowledgeGraph, project_name: str) -> str:
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1"/>
 <title>{title} Knowledge Graph</title>
-<script src="https://unpkg.com/vis-network@9.1.9/standalone/umd/vis-network.min.js"></script>
+{vis_network_tag}
 <style>
 *{{margin:0;padding:0;box-sizing:border-box}}
 body{{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#0f172a;color:#e2e8f0;overflow:hidden}}
@@ -339,12 +387,22 @@ var network = new vis.Network(container, {{nodes: nodesData, edges: edgesData}},
   layout: {{improvedLayout: true}}
 }});
 
+// Entity names originate from README content, so escape before any innerHTML use.
+function esc(v) {{
+  return String(v)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}}
+
 // God nodes panel
 var gp = document.getElementById('god-nodes');
 godNodes.forEach(function(g) {{
   var d = document.createElement('div');
   d.className = 'panel-card';
-  d.innerHTML = '<h4>' + g.name + '</h4><span class="badge">' + g.type.replace(/_/g,' ') + '</span> <span>Degree: ' + g.degree + '</span>';
+  d.innerHTML = '<h4>' + esc(g.name) + '</h4><span class="badge">' + esc(g.type.replace(/_/g,' ')) + '</span> <span>Degree: ' + esc(g.degree) + '</span>';
   gp.appendChild(d);
 }});
 
@@ -353,7 +411,7 @@ var sp = document.getElementById('surprises');
 surprises.forEach(function(s) {{
   var d = document.createElement('div');
   d.className = 'panel-card';
-  d.innerHTML = '<h4>' + s.source + ' \\u2194 ' + s.target + '</h4><p>' + s.relation.replace(/_/g,' ') + ' <span class="badge">score ' + s.score + '</span></p>';
+  d.innerHTML = '<h4>' + esc(s.source) + ' \\u2194 ' + esc(s.target) + '</h4><p>' + esc(s.relation.replace(/_/g,' ')) + ' <span class="badge">score ' + esc(s.score) + '</span></p>';
   sp.appendChild(d);
 }});
 
@@ -362,9 +420,9 @@ var cp = document.getElementById('communities');
 communities.forEach(function(c) {{
   var d = document.createElement('div');
   d.className = 'panel-card';
-  var members = c.members.slice(0,3).join(', ');
+  var members = c.members.slice(0,3).map(esc).join(', ');
   if (c.members.length > 3) members += ' (+' + (c.members.length - 3) + ')';
-  d.innerHTML = '<h4>Cluster ' + c.id + ' <span class="badge">' + c.size + ' nodes</span></h4><p>' + c.dominant_type + ' | ' + c.internal_edges + ' edges | ' + members + '</p>';
+  d.innerHTML = '<h4>Cluster ' + esc(c.id) + ' <span class="badge">' + esc(c.size) + ' nodes</span></h4><p>' + esc(c.dominant_type) + ' | ' + esc(c.internal_edges) + ' edges | ' + members + '</p>';
   cp.appendChild(d);
 }});
 
@@ -373,7 +431,7 @@ var qp = document.getElementById('questions');
 questions.forEach(function(q) {{
   var d = document.createElement('div');
   d.className = 'question-card';
-  d.innerHTML = '<em>' + q + '</em>';
+  d.innerHTML = '<em>' + esc(q) + '</em>';
   qp.appendChild(d);
 }});
 

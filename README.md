@@ -43,7 +43,7 @@ OpenDocs (by [ioteverythin](https://www.ioteverythin.com/)) takes a GitHub repos
 | Knowledge Wiki | Markdown folder | Available |
 | LLM Summaries | Stakeholder views | Available |
 
-### What's New in v0.5.0
+### What's New in v0.9.0
 
 - **Interactive Knowledge Graph** -- Explorable HTML graph (vis.js) with search, filtering, god-node analysis, community clusters, provenance labels, and surprising connections
 - **Graph JSON Export** -- Persistent `graph.json` with nodes, edges, communities, provenance, god nodes, surprising connections, and suggested questions. Query weeks later without re-processing
@@ -64,7 +64,7 @@ OpenDocs (by [ioteverythin](https://www.ioteverythin.com/)) takes a GitHub repos
 
 ### 1. Pipeline (Deterministic + LLM)
 
-The core pipeline parses Markdown/Notebooks and generates all 11 output formats:
+The core pipeline parses Markdown/Notebooks and generates all 12 selectable output formats:
 
 - **Basic mode** -- Pure Markdown AST parsing, no LLM required. Fast, free, predictable.
 - **LLM mode** -- Uses any supported LLM provider to extract entities, build knowledge graphs, and generate executive summaries + stakeholder views (CTO, Investor, Developer).
@@ -128,6 +128,166 @@ opendocs generate ./README.md --local --mode llm --provider anthropic
 # List available themes (25 themes)
 opendocs themes
 ```
+
+### Incremental Builds
+
+Generated artifacts are cached by content, so re-running the pipeline only
+rebuilds what actually changed. This matters most for `opendocs watch`, which
+otherwise regenerates every format on every save.
+
+```bash
+opendocs generate ./README.md --local              # cached automatically
+opendocs generate ./README.md --local --no-cache   # force a full rebuild
+opendocs generate ./README.md --local --cache-dir /tmp/od-cache
+
+opendocs cache            # show location, entry count, and size
+opendocs cache --clear    # empty it
+```
+
+The cache key covers the document content, the knowledge graph, the theme, the
+template variables, the output format, and the installed opendocs version, so
+changing any of them rebuilds rather than reusing. A cache hit reproduces the
+stored artifact byte for byte; the one thing it does not refresh is the
+generation timestamp, which is what makes identical inputs produce identical
+output.
+
+### What Changed Since the Last Release
+
+`opendocs diff` compares two versions of your documentation and reports what
+moved — new and removed sections, concepts, and relationships — then renders
+it as release notes. Deterministic and offline.
+
+```bash
+# Two files
+opendocs diff old/README.md new/README.md
+
+# Two git revisions of the same file
+opendocs diff v0.8.0 HEAD --git . --path README.md
+
+# Two previously exported graphs
+opendocs diff v1_graph.json v2_graph.json
+
+# Draft release notes
+opendocs diff v0.8.0 HEAD --git . --format markdown -o RELEASE_NOTES.md
+
+# Machine-readable, including which formats are worth regenerating
+opendocs diff old.md new.md --format json
+
+# CI gate: fail if documentation drifted
+opendocs diff committed.md generated.md --fail-on-change
+```
+
+The summary also reports which output formats are worth regenerating, so a
+docs pipeline can rebuild only what the change actually affects.
+
+### Linting Documentation in CI
+
+`opendocs lint` checks documentation quality and exits non-zero when it
+regresses, so a pull request can fail on a broken README the same way it fails
+on a broken test:
+
+```bash
+opendocs lint ./README.md --local                      # errors fail the build
+opendocs lint ./README.md --local --fail-on warning    # be stricter
+opendocs lint ./README.md --local --fail-on never      # report only
+opendocs lint ./README.md --local --json               # machine-readable
+opendocs lint https://github.com/owner/repo --check-links
+```
+
+All rules run offline; `--check-links` is the only one that uses the network.
+
+| Rule | Severity | Catches |
+|------|----------|---------|
+| `no-title` | error | No level-1 heading to use as a title |
+| `no-description` | error | No prose at all, only headings and code |
+| `placeholder` | error | Unreplaced template text (`your-project-name`, `CHANGEME`) |
+| `dead-link` | error | 4xx links (`--check-links`) |
+| `missing-installation` / `missing-usage` / `missing-license` | warning | Conventional section absent |
+| `thin-content` | warning | Fewer than 50 words of prose |
+| `todo-marker` | warning | `TODO` / `FIXME` / `TBD` left in published docs |
+| `ragged-table` | warning | Table rows that do not match the header, so it silently renders as plain text |
+| `image-no-alt` | warning | Images without alt text |
+| `heading-jump` | info | Heading levels skipping (H2 to H4) |
+| `duplicate-heading` | info | The same heading repeated at one level |
+| `unlabelled-code` | info | Fenced code with no language annotation |
+
+Use it in a workflow:
+
+```yaml
+- name: Lint documentation
+  run: |
+    pip install opendocs
+    opendocs lint ./README.md --local
+```
+
+Exit codes: `0` clean, `1` findings at or above `--fail-on`, `2` the source
+could not be read.
+
+### Querying a Graph Later
+
+`opendocs generate` writes a `graph.json` alongside the documents. `opendocs
+query` answers questions about it without re-processing the source — no LLM,
+no API key, no network:
+
+```bash
+# Overview: top entities and suggested questions
+opendocs query output/myproject_graph.json
+
+# Structural queries
+opendocs query graph.json --stats
+opendocs query graph.json --list-types
+opendocs query graph.json --search redis
+opendocs query graph.json --entity "PostgreSQL"
+opendocs query graph.json --dependents "PostgreSQL"    # what would be affected
+opendocs query graph.json --dependencies "API Gateway" # what it relies on
+opendocs query graph.json --neighbors "Redis"
+opendocs query graph.json --path "API Gateway" "S3"    # how two things connect
+opendocs query graph.json --type database
+opendocs query graph.json --community 2
+opendocs query graph.json --provenance AMBIGUOUS       # review low-confidence finds
+opendocs query graph.json --god-nodes
+
+# Plain-English questions, answered from graph structure
+opendocs query graph.json "what depends on Redis?"
+opendocs query graph.json "how are the API and S3 connected?"
+opendocs query graph.json "which databases are used?"
+```
+
+Add `--json` to any query for machine-readable output, and `--limit N` to
+control how many rows come back.
+
+Exit codes make it scriptable: `0` success, `1` the query matched nothing,
+`2` the graph file could not be read.
+
+### Offline / Air-Gapped Use
+
+The interactive knowledge graph normally loads vis.js from a CDN. To produce a
+page that renders with no network access at all:
+
+```bash
+opendocs generate ./README.md --local --embed-graph-assets
+```
+
+The library is downloaded once and cached (`~/.cache/opendocs`), so subsequent
+runs need no network. On a fully air-gapped machine, supply it yourself:
+
+```bash
+export OPENDOCS_VIS_NETWORK_JS=/path/to/vis-network.min.js
+opendocs generate ./README.md --local --embed-graph-assets
+```
+
+Diagram rendering can be disabled the same way, which also makes builds fully
+offline and much faster:
+
+```bash
+export OPENDOCS_MERMAID_BACKEND=none   # auto | mmdc | ink | none
+```
+
+| Variable | Purpose |
+|----------|---------|
+| `OPENDOCS_MERMAID_BACKEND` | Diagram backend: `auto` (default), `mmdc`, `ink`, or `none` to disable |
+| `OPENDOCS_VIS_NETWORK_JS` | Path to a local vis-network bundle for `--embed-graph-assets` |
+| `OPENDOCS_CACHE_DIR` | Override the asset cache location (default `~/.cache/opendocs`) |
 
 ### Jupyter Notebook Ingestion
 
@@ -315,8 +475,8 @@ pipeline.run(
 
 ## Features
 
-- **15 Output Formats** -- Word, PDF, PPTX, Blog Post, Jira Tickets, Changelog, LaTeX Paper, One-Pager PDF, Social Cards, FAQ, Architecture Diagrams, Interactive Graph, Graph JSON, Knowledge Wiki
-- **Interactive Knowledge Graph** -- Self-contained HTML visualization (vis.js) with search, legend, community clusters, god nodes, surprising connections, provenance bar, and suggested questions
+- **15 Output Formats** -- Word, PDF, PPTX, Blog Post, Jira Tickets, Changelog, LaTeX Paper, One-Pager PDF, Social Cards, FAQ, Architecture Diagrams, Mindmap, Interactive Graph, Graph JSON, Knowledge Wiki
+- **Interactive Knowledge Graph** -- Single-file HTML visualization with search, legend, community clusters, god nodes, surprising connections, provenance bar, and suggested questions. Loads vis.js from a CDN by default; pass `--embed-graph-assets` to inline it and get a page that renders fully offline
 - **Graph JSON Export** -- Persistent queryable `graph.json` with nodes, edges, communities, provenance labels, god nodes, surprising connections, and suggested questions
 - **Knowledge Wiki** -- Wikipedia-style inter-linked Markdown articles (one per community) with navigable index and full entity catalog
 - **Community Detection** -- Label propagation algorithm groups entities into clusters by edge density (zero external dependencies)

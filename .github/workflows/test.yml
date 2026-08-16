@@ -42,5 +42,8 @@ jobs:
       - name: Run tests
         run: pytest tests/ -v --tb=short
         env:
-          # Prevent any accidental network calls during tests
+          # Disable diagram rendering so the suite makes no network calls and
+          # never triggers an `npx @mermaid-js/mermaid-cli` download (which
+          # pulls Chromium and dominated the run time).
+          OPENDOCS_MERMAID_BACKEND: none
           PYTHONDONTWRITEBYTECODE: "1"

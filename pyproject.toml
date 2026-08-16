@@ -117,6 +117,12 @@ Issues = "https://github.com/ioteverythin/OpenDocs/issues"
 where = ["src"]
 exclude = ["opendocs.agents", "opendocs.agents.*"]
 
+# The docagent templates are loaded at runtime by
+# opendocs.docagent.templates.get_template(); without this they are dropped
+# from the wheel and every lookup raises FileNotFoundError once installed.
+[tool.setuptools.package-data]
+"opendocs.docagent.templates" = ["*.md"]
+
 [tool.ruff]
 line-length = 120
 target-version = "py310"

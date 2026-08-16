@@ -1,6 +1,27 @@
 """Agentic documentation layer for opendocs.
 
-This package implements the Planner → Executor → Critic architecture
+.. warning::
+
+   **Status: architectural scaffolding, not a working feature.** This package
+   is excluded from the built wheel (see ``pyproject.toml``) and is not
+   reachable from the CLI. Several key methods are stubs that return empty or
+   pass-through results:
+
+   - ``diff.DiffAgent._compute_diff`` returns an empty ``DiffSummary``
+     regardless of the refs it is given, so the whole diff chain reports no
+     changes even when a repository has them.
+   - ``diff.RegenerationAgent._regenerate`` returns the requested format list
+     without regenerating anything.
+   - ``diff.ImpactAgent._compute_impact`` is implemented, but indexes entities
+     by a ``source_file`` / ``file_path`` / ``path`` property that nothing in
+     the extractor ever sets, so its file-to-entity map is always empty.
+
+   Do not expose these through user-facing commands until those are
+   implemented — they would silently succeed while doing nothing. For working
+   change detection, see :mod:`opendocs.core.doc_diff`, which powers
+   ``opendocs diff``.
+
+This package sketches the Planner → Executor → Critic architecture
 that differentiates opendocs from static doc generators like Mintlify,
 GitBook AI, DocuWriter, and repo-diagram tools.
 

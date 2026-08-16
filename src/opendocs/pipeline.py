@@ -6,6 +6,8 @@ from pathlib import Path
 
 from rich.console import Console
 
+from .core.build_cache import BuildCache
+from .core.build_cache import fingerprint as build_fingerprint
 from .core.code_analyzer import CodebaseAnalyzer, generate_codebase_markdown
 from .core.fetcher import ReadmeFetcher, is_github_url, is_npm_source
 from .core.models import DocumentModel, GenerationResult, OutputFormat, PipelineResult
@@ -88,6 +90,9 @@ class Pipeline:
         provider: str = "openai",
         template_vars: TemplateVars | None = None,
         config_path: str | None = None,
+        include_outputs: bool = True,
+        embed_graph_assets: bool = False,
+        cache: BuildCache | None = None,
     ) -> PipelineResult:
         """Run the full pipeline.
 
@@ -123,6 +128,9 @@ class Pipeline:
             Pre-built ``TemplateVars`` instance with report variables.
         config_path
             Path to a YAML/JSON config file with template variables.
+        include_outputs
+            When *source* is a Jupyter Notebook, include executed cell
+            outputs (text, images, tables) in the parsed document.
         """
         output_path = Path(output_dir).resolve()
         output_path.mkdir(parents=True, exist_ok=True)
@@ -192,6 +200,7 @@ class Pipeline:
                 repo_name=name,
                 repo_url=repo_url,
                 source_path=source,
+                include_outputs=include_outputs,
             )
         else:
             console.print("[bold blue]Parsing Markdown...[/]")
@@ -220,6 +229,8 @@ class Pipeline:
             model=model,
             base_url=base_url,
             provider=provider,
+            embed_graph_assets=embed_graph_assets,
+            cache=cache,
         )
 
     # ------------------------------------------------------------------
@@ -240,6 +251,8 @@ class Pipeline:
         provider: str = "openai",
         template_vars: TemplateVars | None = None,
         config_path: str | None = None,
+        embed_graph_assets: bool = False,
+        cache: BuildCache | None = None,
     ) -> PipelineResult:
         """Merge all .md/.ipynb files in *folder* and run the full pipeline.
 
@@ -317,6 +330,8 @@ class Pipeline:
             model=model,
             base_url=base_url,
             provider=provider,
+            embed_graph_assets=embed_graph_assets,
+            cache=cache,
         )
 
     # ------------------------------------------------------------------
@@ -336,6 +351,8 @@ class Pipeline:
         adapter_path: str | None = None,
         template_vars: TemplateVars | None = None,
         config_path: str | None = None,
+        embed_graph_assets: bool = False,
+        cache: BuildCache | None = None,
     ) -> PipelineResult:
         """Analyze a codebase directory and generate documentation.
 
@@ -499,6 +516,8 @@ class Pipeline:
             model=model,
             base_url=base_url,
             provider=provider,
+            embed_graph_assets=embed_graph_assets,
+            cache=cache,
         )
 
     # ------------------------------------------------------------------
@@ -517,6 +536,8 @@ class Pipeline:
         model: str = "gpt-4o-mini",
         base_url: str | None = None,
         provider: str = "openai",
+        embed_graph_assets: bool = False,
+        cache: BuildCache | None = None,
     ) -> PipelineResult:
         """Run pipeline steps 2b–end on an already-parsed ``DocumentModel``."""
 
@@ -638,6 +659,33 @@ class Pipeline:
                 image_cache=image_cache,
                 template_vars=tvars,
             )
+
+            # Try the cache before doing the work.  The key covers the
+            # document, the graph, the theme, the template variables and the
+            # opendocs version, so a hit means the output would be identical.
+            cache_key = None
+            if cache is not None and cache.enabled:
+                try:
+                    cache_key = build_fingerprint(
+                        doc=doc,
+                        kg=kg,
+                        output_format=fmt.value,
+                        theme_name=getattr(theme, "name", str(theme)),
+                        template_vars=tvars,
+                        extra={"sort_tables": sort_tables, "mode": mode},
+                    )
+                except Exception as exc:  # never let caching break a build
+                    console.print(f"[dim]Cache key failed for {fmt.value}: {exc}[/]")
+                    cache_key = None
+
+            if cache_key:
+                restored = cache.restore_into(cache_key, output_path)
+                if restored is not None:
+                    console.print(f"[bold blue]Generating {fmt.value.upper()}...[/] [dim](cached)[/]")
+                    console.print(f"[green][OK][/] {restored}")
+                    result.results.append(GenerationResult(format=fmt, output_path=restored))
+                    continue
+
             console.print(f"[bold blue]Generating {fmt.value.upper()}...[/]")
 
             gen_result: GenerationResult = gen.generate(doc, output_path)
@@ -645,6 +693,8 @@ class Pipeline:
 
             if gen_result.success:
                 console.print(f"[green][OK][/] {gen_result.output_path}")
+                if cache_key:
+                    cache.put(cache_key, gen_result.output_path)
             else:
                 console.print(f"[red][FAIL][/] {fmt.value}: {gen_result.error}")
 
@@ -670,7 +720,7 @@ class Pipeline:
             from .generators.interactive_graph import generate_interactive_graph
 
             console.print("[bold blue]Generating Interactive Graph (HTML)...[/]")
-            graph_result = generate_interactive_graph(doc, kg, output_path)
+            graph_result = generate_interactive_graph(doc, kg, output_path, embed_assets=embed_graph_assets)
             result.results.append(graph_result)
             if graph_result.success:
                 console.print(f"[green][OK][/] {graph_result.output_path}")

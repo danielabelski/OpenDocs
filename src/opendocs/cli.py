@@ -40,6 +40,13 @@ FORMAT_MAP = {
     "all": OutputFormat.ALL,
 }
 
+# Derived from FORMAT_MAP so the CLI choices can never drift out of sync with
+# the formats the pipeline actually knows how to build.
+FORMAT_CHOICES = list(FORMAT_MAP)
+
+# Every concrete format produced by `--format all`.
+ALL_FORMATS = [fmt for key, fmt in FORMAT_MAP.items() if key != "all"]
+
 
 @click.group()
 @click.version_option(version="0.9.0", prog_name="opendocs")
@@ -54,23 +61,7 @@ def main():
     "-f",
     "--format",
     "fmt",
-    type=click.Choice(
-        [
-            "word",
-            "pdf",
-            "pptx",
-            "blog",
-            "jira",
-            "changelog",
-            "latex",
-            "onepager",
-            "social",
-            "faq",
-            "architecture",
-            "all",
-        ],
-        case_sensitive=False,
-    ),
+    type=click.Choice(FORMAT_CHOICES, case_sensitive=False),
     default="all",
     help="Output format (default: all).",
 )
@@ -160,6 +151,26 @@ def main():
     help="Include cell outputs when parsing Jupyter Notebooks (default: yes).",
 )
 @click.option(
+    "--embed-graph-assets",
+    is_flag=True,
+    default=False,
+    help="Inline vis-network into the interactive graph so it renders offline (~700 KB larger).",
+)
+@click.option(
+    "--no-cache",
+    "no_cache",
+    is_flag=True,
+    default=False,
+    help="Ignore the build cache and regenerate every format from scratch.",
+)
+@click.option(
+    "--cache-dir",
+    "cache_dir",
+    type=click.Path(),
+    default=None,
+    help="Where to keep cached build artifacts (default: ~/.cache/opendocs/build).",
+)
+@click.option(
     "--folder-recursive/--no-folder-recursive",
     "folder_recursive",
     default=True,
@@ -236,6 +247,9 @@ def generate(
     department: str | None,
     confidentiality: str | None,
     include_outputs: bool,
+    embed_graph_assets: bool,
+    no_cache: bool,
+    cache_dir: str | None,
     folder_recursive: bool,
     folder_title: str | None,
     notion_page_id: str | None,
@@ -277,24 +291,15 @@ def generate(
     # Resolve formats
     chosen = FORMAT_MAP[fmt.lower()]
     if chosen == OutputFormat.ALL:
-        formats = [
-            OutputFormat.WORD,
-            OutputFormat.PDF,
-            OutputFormat.PPTX,
-            OutputFormat.BLOG,
-            OutputFormat.JIRA,
-            OutputFormat.CHANGELOG,
-            OutputFormat.LATEX,
-            OutputFormat.ONEPAGER,
-            OutputFormat.SOCIAL,
-            OutputFormat.FAQ,
-            OutputFormat.ARCHITECTURE,
-            OutputFormat.MINDMAP,
-        ]
+        formats = list(ALL_FORMATS)
     else:
         formats = [chosen]
 
     # Run pipeline — folder path or single file/URL
+    from .core.build_cache import BuildCache
+
+    build_cache = BuildCache(cache_dir, enabled=not no_cache)
+
     pipeline = Pipeline(github_token=token)
     source_path = Path(source)
 
@@ -314,6 +319,8 @@ def generate(
             sort_tables=sort_tables,
             provider=llm_provider,
             template_vars=tvars,
+            embed_graph_assets=embed_graph_assets,
+            cache=build_cache,
         )
     else:
         result = pipeline.run(
@@ -329,6 +336,9 @@ def generate(
             sort_tables=sort_tables,
             provider=llm_provider,
             template_vars=tvars,
+            include_outputs=include_outputs,
+            embed_graph_assets=embed_graph_assets,
+            cache=build_cache,
         )
 
     # ---- AI Reader files summary ------------------------------------
@@ -450,8 +460,9 @@ def inspect(source: str, local: bool, token: str | None):
     from .core.parser import ReadmeParser
 
     if is_notebook(source):
+        name = Path(source).stem
         parser = NotebookParser()
-        doc = parser.parse(source, repo_name=Path(source).stem)
+        doc = parser.parse(source, repo_name=name)
     else:
         fetcher = ReadmeFetcher(github_token=token)
         if local:
@@ -504,7 +515,7 @@ def inspect(source: str, local: bool, token: str | None):
     "--branch",
     "branch_name",
     default="docs/auto-update",
-    help="Base branch name for auto-PR (default: docs/auto-update).",
+    help="Branch-name prefix for auto-PR; a UTC timestamp is appended (default: docs/auto-update).",
 )
 @click.option(
     "--patterns",
@@ -515,23 +526,7 @@ def inspect(source: str, local: bool, token: str | None):
     "-f",
     "--format",
     "fmt",
-    type=click.Choice(
-        [
-            "word",
-            "pdf",
-            "pptx",
-            "blog",
-            "jira",
-            "changelog",
-            "latex",
-            "onepager",
-            "social",
-            "faq",
-            "architecture",
-            "all",
-        ],
-        case_sensitive=False,
-    ),
+    type=click.Choice(FORMAT_CHOICES, case_sensitive=False),
     default="all",
     help="Output format (default: all).",
 )
@@ -643,23 +638,7 @@ def _add_section_tree(parent, section):
     "-f",
     "--format",
     "fmt",
-    type=click.Choice(
-        [
-            "word",
-            "pdf",
-            "pptx",
-            "blog",
-            "jira",
-            "changelog",
-            "latex",
-            "onepager",
-            "social",
-            "faq",
-            "architecture",
-            "all",
-        ],
-        case_sensitive=False,
-    ),
+    type=click.Choice(FORMAT_CHOICES, case_sensitive=False),
     default="all",
     help="Output format (default: all).",
 )
@@ -783,20 +762,7 @@ def codebase(
     # Resolve formats
     chosen = FORMAT_MAP[fmt.lower()]
     if chosen == OutputFormat.ALL:
-        formats = [
-            OutputFormat.WORD,
-            OutputFormat.PDF,
-            OutputFormat.PPTX,
-            OutputFormat.BLOG,
-            OutputFormat.JIRA,
-            OutputFormat.CHANGELOG,
-            OutputFormat.LATEX,
-            OutputFormat.ONEPAGER,
-            OutputFormat.SOCIAL,
-            OutputFormat.FAQ,
-            OutputFormat.ARCHITECTURE,
-            OutputFormat.MINDMAP,
-        ]
+        formats = list(ALL_FORMATS)
     else:
         formats = [chosen]
 
@@ -987,6 +953,559 @@ def finetune(
     except Exception as exc:
         console.print(f"[bold red]Fine-tuning failed:[/] {exc}")
         raise SystemExit(1)
+
+
+@main.command()
+@click.option("--clear", "do_clear", is_flag=True, default=False, help="Delete every cached artifact.")
+@click.option("--cache-dir", "cache_dir", type=click.Path(), default=None, help="Cache location to inspect.")
+def cache(do_clear: bool, cache_dir: str | None):
+    """Inspect or clear the incremental build cache.
+
+    \b
+    Examples:
+      opendocs cache            # show location and size
+      opendocs cache --clear    # empty it
+    """
+    from .core.build_cache import BuildCache
+
+    store = BuildCache(cache_dir)
+
+    if do_clear:
+        removed = store.clear()
+        console.print(f"[green][OK][/] Cleared {removed} cached artifact(s) from {store.dir}")
+        return
+
+    size = store.size_bytes()
+    entries = len(list(store.dir.glob("*/*/manifest.json"))) if store.dir.exists() else 0
+    console.print(f"\n[bold]Build cache[/] [dim]{store.dir}[/]")
+    console.print(f"  entries: {entries}")
+    console.print(f"  size:    {size / 1024 / 1024:.1f} MB" if size else "  size:    empty")
+    console.print("\n[dim]Clear it with `opendocs cache --clear`.[/]\n")
+
+
+@main.command()
+@click.argument("old", metavar="OLD")
+@click.argument("new", metavar="NEW")
+@click.option(
+    "--git",
+    "git_repo",
+    type=click.Path(exists=True, file_okay=False),
+    default=None,
+    help="Treat OLD and NEW as git revisions of --path inside this repository.",
+)
+@click.option(
+    "--path",
+    "git_file",
+    default="README.md",
+    show_default=True,
+    help="File to compare when --git is used.",
+)
+@click.option(
+    "--format",
+    "out_format",
+    type=click.Choice(["markdown", "json", "summary"], case_sensitive=False),
+    default="summary",
+    show_default=True,
+    help="Output style: a short summary, full release notes, or JSON.",
+)
+@click.option("-o", "--output", "output_file", type=click.Path(), default=None, help="Write the result to a file.")
+@click.option("--title", default="Documentation Changes", help="Heading for generated release notes.")
+@click.option(
+    "--fail-on-change",
+    is_flag=True,
+    default=False,
+    help="Exit non-zero when anything changed (for CI drift detection).",
+)
+def diff(
+    old: str,
+    new: str,
+    git_repo: str | None,
+    git_file: str,
+    out_format: str,
+    output_file: str | None,
+    title: str,
+    fail_on_change: bool,
+):
+    """Report what changed between two versions of documentation.
+
+    OLD and NEW are Markdown files, notebooks, or exported graph.json files.
+    With --git they are treated as git revisions of --path instead.
+
+    \b
+    Examples:
+      opendocs diff old/README.md new/README.md
+      opendocs diff v1_graph.json v2_graph.json
+      opendocs diff v0.8.0 HEAD --git . --path README.md
+      opendocs diff v0.8.0 HEAD --git . --format markdown -o RELEASE_NOTES.md
+      opendocs diff a.md b.md --fail-on-change      # CI drift gate
+    """
+    import json as _json
+
+    from .core.doc_diff import (
+        diff_snapshots,
+        impacted_formats,
+        render_release_notes,
+        snapshot_from_git,
+        snapshot_from_path,
+    )
+
+    try:
+        if git_repo:
+            old_snap = snapshot_from_git(git_repo, old, git_file)
+            new_snap = snapshot_from_git(git_repo, new, git_file)
+        else:
+            old_snap = snapshot_from_path(old)
+            new_snap = snapshot_from_path(new)
+    except Exception as exc:
+        console.print(f"[bold red]Could not load sources:[/] {exc}")
+        raise SystemExit(2) from exc
+
+    delta = diff_snapshots(old_snap, new_snap)
+
+    if out_format.lower() == "json":
+        payload = {**delta.to_dict(), "impacted_formats": impacted_formats(delta)}
+        rendered = _json.dumps(payload, indent=2)
+        if output_file:
+            Path(output_file).write_text(rendered, encoding="utf-8")
+            console.print(f"[green][OK][/] Wrote {output_file}")
+        else:
+            console.print_json(rendered)
+    elif out_format.lower() == "markdown":
+        rendered = render_release_notes(delta, title=title)
+        if output_file:
+            Path(output_file).write_text(rendered, encoding="utf-8")
+            console.print(f"[green][OK][/] Wrote {output_file}")
+        else:
+            console.print(rendered)
+    else:
+        _print_diff_summary(delta, impacted_formats(delta))
+        if output_file:
+            Path(output_file).write_text(render_release_notes(delta, title=title), encoding="utf-8")
+            console.print(f"[green][OK][/] Wrote {output_file}")
+
+    if fail_on_change and not delta.is_empty:
+        raise SystemExit(1)
+
+
+def _print_diff_summary(delta, formats: list[str]) -> None:
+    """Render a delta as a compact terminal summary."""
+    console.print(f"\n[bold]{delta.old_label}[/] [dim]->[/] [bold]{delta.new_label}[/]")
+
+    if delta.is_empty:
+        console.print("[green]No documentation changes detected.[/]\n")
+        return
+
+    counts = delta.counts()
+    rows = [
+        ("Sections added", counts["sections_added"], "green"),
+        ("Sections removed", counts["sections_removed"], "red"),
+        ("Concepts added", counts["entities_added"], "green"),
+        ("Concepts removed", counts["entities_removed"], "red"),
+        ("Concepts reclassified", counts["entities_retyped"], "yellow"),
+        ("Relations added", counts["relations_added"], "green"),
+        ("Relations removed", counts["relations_removed"], "red"),
+    ]
+    console.print()
+    for label, count, colour in rows:
+        if count:
+            console.print(f"  [{colour}]{count:>4}[/] {label}")
+
+    for section in [s for s in delta.sections if s.change == "added"][:10]:
+        console.print(f"    [green]+[/] section: {section.title}")
+    for section in [s for s in delta.sections if s.change == "removed"][:10]:
+        console.print(f"    [red]-[/] section: {section.title}")
+
+    if formats:
+        console.print(f"\n[dim]Worth regenerating:[/] {', '.join(formats)}")
+    console.print()
+
+
+@main.command()
+@click.argument("source", metavar="SOURCE")
+@click.option("--local", is_flag=True, default=False, help="Treat SOURCE as a local file path.")
+@click.option("--token", envvar="GITHUB_TOKEN", default=None, help="GitHub token for remote sources.")
+@click.option(
+    "--fail-on",
+    type=click.Choice(["error", "warning", "info", "never"], case_sensitive=False),
+    default="error",
+    show_default=True,
+    help="Lowest severity that should make the command exit non-zero.",
+)
+@click.option("--check-links", is_flag=True, default=False, help="Also request every external link (uses network).")
+@click.option("--include-badges", is_flag=True, default=False, help="Include badge/shield URLs in link checking.")
+@click.option("--link-timeout", type=float, default=10.0, show_default=True, help="Per-link timeout in seconds.")
+@click.option("--json", "as_json", is_flag=True, default=False, help="Emit findings as JSON.")
+def lint(
+    source: str,
+    local: bool,
+    token: str | None,
+    fail_on: str,
+    check_links: bool,
+    include_badges: bool,
+    link_timeout: float,
+    as_json: bool,
+):
+    """Check documentation quality and exit non-zero when it regresses.
+
+    SOURCE is a GitHub URL, a local Markdown file, or a Jupyter Notebook.
+    All rules run offline unless --check-links is passed.
+
+    \b
+    Examples:
+      opendocs lint ./README.md --local
+      opendocs lint ./README.md --local --fail-on warning
+      opendocs lint https://github.com/owner/repo --check-links
+      opendocs lint ./README.md --local --json
+    """
+    import json as _json
+
+    # -- Load and parse the source -------------------------------------
+    from .core.fetcher import ReadmeFetcher, is_github_url
+    from .core.linter import Severity, lint_document
+    from .core.notebook_parser import NotebookParser, is_notebook
+    from .core.parser import ReadmeParser
+
+    try:
+        if is_notebook(source):
+            doc = NotebookParser().parse(source, repo_name=Path(source).stem)
+        else:
+            fetcher = ReadmeFetcher(github_token=token)
+            if local or not is_github_url(source):
+                content, name = fetcher._fetch_local(source)
+            else:
+                content, name = fetcher.fetch(source)
+            doc = ReadmeParser().parse(content, repo_name=name)
+    except Exception as exc:
+        console.print(f"[bold red]Could not read {source}:[/] {exc}")
+        raise SystemExit(2) from exc
+
+    report = lint_document(
+        doc,
+        check_links_too=check_links,
+        link_timeout=link_timeout,
+        include_badges=include_badges,
+    )
+
+    if as_json:
+        console.print_json(_json.dumps(report.to_dict()))
+    else:
+        _print_lint_report(report, source)
+
+    if fail_on.lower() == "never":
+        return
+    raise SystemExit(report.exit_code(fail_on=Severity(fail_on.lower())))
+
+
+def _print_lint_report(report, source: str) -> None:
+    """Render a lint report as grouped, colour-coded output."""
+    styles = {"error": "bold red", "warning": "yellow", "info": "dim cyan"}
+    labels = {"error": "ERROR", "warning": "WARN ", "info": "INFO "}
+
+    console.print(f"\n[bold]Linting[/] {source}")
+
+    if not report.findings:
+        console.print(f"[green]No issues found[/] [dim]({report.checked} checks)[/]\n")
+        return
+
+    for finding in report.findings:
+        sev = finding.severity.value
+        console.print(f"  [{styles[sev]}]{labels[sev]}[/] [bold]{finding.rule}[/]  {finding.message}")
+        if finding.context:
+            console.print(f"          [dim]{finding.context}[/]")
+
+    counts = report.counts()
+    summary = ", ".join(f"{n} {name}{'s' if n != 1 else ''}" for name, n in counts.items() if n)
+    console.print(f"\n[bold]{summary or 'no issues'}[/] [dim]({report.checked} checks)[/]\n")
+
+
+@main.command()
+@click.argument("graph_path", type=click.Path(exists=True), metavar="GRAPH_JSON")
+@click.argument("question", required=False, default=None)
+@click.option("--search", "search_term", default=None, help="Substring search over entity names.")
+@click.option("--entity", default=None, help="Show one entity with its incoming and outgoing relations.")
+@click.option("--neighbors", "neighbors_of", default=None, help="Entities directly connected to this one.")
+@click.option("--dependents", default=None, help="Entities that point at this one (what would be affected).")
+@click.option("--dependencies", default=None, help="Entities this one points at (what it relies on).")
+@click.option("--path", "path_ends", nargs=2, default=None, help="Shortest path between two entities.")
+@click.option("--type", "entity_type", default=None, help="List all entities of a type (e.g. database).")
+@click.option("--community", "community_id", type=int, default=None, help="List members of a community.")
+@click.option("--provenance", default=None, help="Filter by EXTRACTED, INFERRED, or AMBIGUOUS.")
+@click.option("--god-nodes", "show_god_nodes", is_flag=True, help="Highest-degree hub entities.")
+@click.option("--list-types", "list_types", is_flag=True, help="Show entity and relation type counts.")
+@click.option("--questions", "show_questions", is_flag=True, help="Show the stored suggested questions.")
+@click.option("--stats", "show_stats", is_flag=True, help="Show graph statistics.")
+@click.option("--json", "as_json", is_flag=True, help="Emit machine-readable JSON instead of tables.")
+@click.option("--limit", type=int, default=25, show_default=True, help="Maximum rows to display.")
+def query(
+    graph_path: str,
+    question: str | None,
+    search_term: str | None,
+    entity: str | None,
+    neighbors_of: str | None,
+    dependents: str | None,
+    dependencies: str | None,
+    path_ends: tuple[str, str] | None,
+    entity_type: str | None,
+    community_id: int | None,
+    provenance: str | None,
+    show_god_nodes: bool,
+    list_types: bool,
+    show_questions: bool,
+    show_stats: bool,
+    as_json: bool,
+    limit: int,
+):
+    """Query an exported graph.json without re-processing the source.
+
+    GRAPH_JSON is a graph file produced by a previous `opendocs generate` run.
+    Everything here works offline — no LLM, no API key, no network.
+
+    \b
+    Examples:
+      opendocs query graph.json --stats
+      opendocs query graph.json --search redis
+      opendocs query graph.json --entity "PostgreSQL"
+      opendocs query graph.json --dependents "PostgreSQL"
+      opendocs query graph.json --path "API" "S3"
+      opendocs query graph.json --type database
+      opendocs query graph.json "what depends on Redis?"
+    """
+    from .core.graph_query import GraphQuery, GraphQueryError, nodes_to_dicts
+
+    try:
+        graph = GraphQuery.load(graph_path)
+    except GraphQueryError as exc:
+        console.print(f"[bold red]Error:[/] {exc}")
+        raise SystemExit(2) from exc
+
+    try:
+        _run_query(
+            graph,
+            question=question,
+            search_term=search_term,
+            entity=entity,
+            neighbors_of=neighbors_of,
+            dependents=dependents,
+            dependencies=dependencies,
+            path_ends=path_ends,
+            entity_type=entity_type,
+            community_id=community_id,
+            provenance=provenance,
+            show_god_nodes=show_god_nodes,
+            list_types=list_types,
+            show_questions=show_questions,
+            show_stats=show_stats,
+            as_json=as_json,
+            limit=limit,
+            nodes_to_dicts=nodes_to_dicts,
+        )
+    except GraphQueryError as exc:
+        console.print(f"[bold red]Error:[/] {exc}")
+        raise SystemExit(1) from exc
+
+
+def _node_table(title: str, nodes, limit: int):
+    """Render entities as a Rich table."""
+    from rich.table import Table as RichTable
+
+    table = RichTable(title=title, show_lines=False, title_justify="left")
+    table.add_column("Name", style="bold cyan")
+    table.add_column("Type", style="magenta")
+    table.add_column("Degree", justify="right")
+    table.add_column("Community", justify="right")
+    table.add_column("Provenance", style="dim")
+    for n in nodes[:limit]:
+        table.add_row(n.name, n.type.replace("_", " "), str(n.degree), str(n.community), n.provenance)
+    return table
+
+
+def _run_query(graph, **opts):
+    """Dispatch a single query mode and print the result."""
+    import json as _json
+
+    as_json = opts["as_json"]
+    limit = opts["limit"]
+    nodes_to_dicts = opts["nodes_to_dicts"]
+
+    def emit_nodes(title, nodes):
+        if as_json:
+            console.print_json(_json.dumps({"query": title, "results": nodes_to_dicts(nodes[:limit])}))
+        else:
+            if not nodes:
+                console.print(f"[yellow]No results for:[/] {title}")
+                return
+            console.print(_node_table(title, nodes, limit))
+            if len(nodes) > limit:
+                console.print(f"[dim]... {len(nodes) - limit} more (raise --limit to see them)[/dim]")
+
+    # -- Metadata modes -------------------------------------------------
+    if opts["show_stats"]:
+        stats = {"project": graph.project_name, "generated_at": graph.generated_at, **graph.stats}
+        if as_json:
+            console.print_json(_json.dumps(stats))
+        else:
+            from rich.table import Table as RichTable
+
+            table = RichTable(title=f"{graph.project_name} — graph statistics", title_justify="left")
+            table.add_column("Metric", style="bold")
+            table.add_column("Value", justify="right")
+            for key, value in stats.items():
+                table.add_row(str(key).replace("_", " "), str(value))
+            console.print(table)
+        return
+
+    if opts["list_types"]:
+        payload = {"entity_types": graph.entity_types(), "relation_types": graph.relation_types()}
+        if as_json:
+            console.print_json(_json.dumps(payload))
+        else:
+            from rich.table import Table as RichTable
+
+            table = RichTable(title="Entity types", title_justify="left")
+            table.add_column("Type", style="bold cyan")
+            table.add_column("Count", justify="right")
+            for key, count in payload["entity_types"].items():
+                table.add_row(key.replace("_", " "), str(count))
+            console.print(table)
+
+            table2 = RichTable(title="Relation types", title_justify="left")
+            table2.add_column("Relation", style="bold magenta")
+            table2.add_column("Count", justify="right")
+            for key, count in payload["relation_types"].items():
+                table2.add_row(key.replace("_", " "), str(count))
+            console.print(table2)
+        return
+
+    if opts["show_questions"]:
+        questions = graph.suggested_questions()
+        if as_json:
+            console.print_json(_json.dumps({"suggested_questions": questions}))
+        else:
+            console.print("[bold]Questions this graph can answer:[/]")
+            for i, q in enumerate(questions, 1):
+                console.print(f"  [cyan]{i}.[/] {q}")
+        return
+
+    # -- Entity modes ---------------------------------------------------
+    if opts["show_god_nodes"]:
+        emit_nodes("God nodes (highest degree)", graph.god_nodes(top_n=limit))
+        return
+
+    if opts["search_term"]:
+        emit_nodes(f"Search: {opts['search_term']!r}", graph.search(opts["search_term"], limit=limit))
+        return
+
+    if opts["entity_type"]:
+        emit_nodes(f"Type: {opts['entity_type']}", graph.of_type(opts["entity_type"]))
+        return
+
+    if opts["provenance"]:
+        emit_nodes(f"Provenance: {opts['provenance'].upper()}", graph.by_provenance(opts["provenance"]))
+        return
+
+    if opts["community_id"] is not None:
+        emit_nodes(f"Community {opts['community_id']}", graph.community_members(opts["community_id"]))
+        return
+
+    if opts["neighbors_of"]:
+        emit_nodes(f"Neighbors of {opts['neighbors_of']!r}", graph.neighbors(opts["neighbors_of"]))
+        return
+
+    if opts["dependents"]:
+        emit_nodes(f"Depends on {opts['dependents']!r}", graph.dependents_of(opts["dependents"]))
+        return
+
+    if opts["dependencies"]:
+        emit_nodes(f"{opts['dependencies']!r} relies on", graph.dependencies_of(opts["dependencies"]))
+        return
+
+    if opts["entity"]:
+        node = graph.resolve(opts["entity"])
+        outgoing = graph.outgoing(node.name)
+        incoming = graph.incoming(node.name)
+        if as_json:
+            console.print_json(
+                _json.dumps(
+                    {
+                        "entity": nodes_to_dicts([node])[0],
+                        "outgoing": [{"relation": e.relation, "target": t.name} for e, t in outgoing],
+                        "incoming": [{"relation": e.relation, "source": s.name} for e, s in incoming],
+                    }
+                )
+            )
+        else:
+            console.print(f"\n[bold cyan]{node.name}[/]  [dim]({node.type.replace('_', ' ')})[/]")
+            console.print(
+                f"[dim]degree {node.degree} | community {node.community} | "
+                f"{node.provenance} | confidence {node.confidence:.0%}[/]"
+            )
+            if node.source_section:
+                console.print(f"[dim]found in section: {node.source_section}[/]")
+            if outgoing:
+                console.print("\n[bold]Points at:[/]")
+                for e, t in outgoing[:limit]:
+                    console.print(f"  [green]--{e.relation.replace('_', ' ')}-->[/] {t.name}")
+            if incoming:
+                console.print("\n[bold]Pointed at by:[/]")
+                for e, s in incoming[:limit]:
+                    console.print(f"  {s.name} [green]--{e.relation.replace('_', ' ')}-->[/]")
+            if not outgoing and not incoming:
+                console.print("\n[yellow]No relations recorded for this entity.[/]")
+        return
+
+    if opts["path_ends"]:
+        start, end = opts["path_ends"]
+        hops = graph.path(start, end)
+        if as_json:
+            console.print_json(
+                _json.dumps(
+                    {
+                        "start": start,
+                        "end": end,
+                        "hops": [{"from": h.frm.name, "relation": h.edge.relation, "to": h.to.name} for h in hops],
+                    }
+                )
+            )
+        elif not hops:
+            console.print(f"[yellow]No path found between {start!r} and {end!r}.[/]")
+        else:
+            console.print(f"\n[bold]Path ({len(hops)} hop(s)):[/]")
+            console.print(f"  [cyan]{hops[0].frm.name}[/]")
+            for h in hops:
+                arrow = "<--" if h.reversed_ else "-->"
+                console.print(f"    [green]{arrow} {h.edge.relation.replace('_', ' ')} {arrow}[/] [cyan]{h.to.name}[/]")
+        return
+
+    # -- Natural-language fallback --------------------------------------
+    if opts["question"]:
+        answer = graph.answer(opts["question"])
+        if as_json:
+            console.print_json(_json.dumps(answer.to_dict()))
+            return
+        if answer.hops:
+            console.print(f"\n[dim]{answer.summary}[/]")
+            console.print(f"  [cyan]{answer.hops[0].frm.name}[/]")
+            for h in answer.hops:
+                arrow = "<--" if h.reversed_ else "-->"
+                console.print(f"    [green]{arrow} {h.edge.relation.replace('_', ' ')} {arrow}[/] [cyan]{h.to.name}[/]")
+        elif answer.nodes:
+            # The summary is the table title; printing it separately duplicates it.
+            console.print(_node_table(answer.summary, answer.nodes, limit))
+        else:
+            console.print(f"\n[dim]{answer.summary}[/]")
+            console.print("[yellow]No matching entities. Try --search or --list-types.[/]")
+        return
+
+    # -- Nothing selected: show an overview ------------------------------
+    console.print(f"\n[bold]{graph.project_name}[/] [dim]graph exported {graph.generated_at or 'unknown'}[/]")
+    console.print(f"[dim]{len(graph.nodes)} entities, {len(graph.edges)} relations[/]\n")
+    console.print(_node_table("Top entities", graph.god_nodes(top_n=limit), limit))
+    questions = graph.suggested_questions()
+    if questions:
+        console.print("\n[bold]Try asking:[/]")
+        for q in questions[:3]:
+            console.print(f"  [dim]-[/] {q}")
+    console.print("\n[dim]Run `opendocs query --help` for all query modes.[/]")
 
 
 if __name__ == "__main__":

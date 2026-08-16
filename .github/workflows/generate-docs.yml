@@ -34,9 +34,15 @@ jobs:
         run: pip install opendocs
 
       - name: Generate documentation
+        # Inputs are passed through env rather than interpolated into the
+        # script body: `${{ }}` substitution happens before the shell runs, so
+        # a crafted input would otherwise execute as shell code.
+        env:
+          INPUT_README: ${{ github.event.inputs.readme_path || './README.md' }}
+          INPUT_FORMATS: ${{ github.event.inputs.formats || 'word,pdf,pptx' }}
         run: |
-          README="${{ github.event.inputs.readme_path || './README.md' }}"
-          FORMATS="${{ github.event.inputs.formats || 'word,pdf,pptx' }}"
+          README="$INPUT_README"
+          FORMATS="$INPUT_FORMATS"
 
           # Convert comma-separated to individual --format flags
           for FMT in $(echo "$FORMATS" | tr ',' '\n'); do
