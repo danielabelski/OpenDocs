@@ -211,6 +211,7 @@ def collect_links(doc: DocumentModel) -> list[str]:
 
 
 def is_badge(url: str) -> bool:
+    """Whether *url* points at a decorative badge rather than real content."""
     return any(host in url.lower() for host in _BADGE_HOSTS)
 
 

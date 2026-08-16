@@ -18,6 +18,8 @@ if TYPE_CHECKING:
 
 
 class Colors:
+    """Theme colour palette, mutated in place by :func:`apply_theme`."""
+
     # Brand
     PRIMARY = (0, 102, 204)  # Core blue
     PRIMARY_DARK = (0, 71, 153)  # Darker blue for depth
@@ -66,6 +68,8 @@ class Colors:
 
 
 class Fonts:
+    """Theme font families, mutated in place by :func:`apply_theme`."""
+
     HEADING = "Calibri"
     BODY = "Calibri"
     CODE = "Courier"

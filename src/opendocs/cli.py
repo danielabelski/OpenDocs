@@ -959,6 +959,123 @@ def finetune(
 
 
 @main.command()
+@click.argument("codebase_dir", type=click.Path(exists=True, file_okay=False), default=".")
+@click.option(
+    "--docs",
+    "doc_paths",
+    type=click.Path(exists=True),
+    multiple=True,
+    default=None,
+    help="Documentation file(s) to check against (default: README.md in the project root).",
+)
+@click.option(
+    "--fail-under",
+    type=float,
+    default=None,
+    help="Exit non-zero if overall coverage is below this percentage.",
+)
+@click.option("--include-private", is_flag=True, default=False, help="Also score underscore-prefixed symbols.")
+@click.option("--include-tests", is_flag=True, default=False, help="Also score test files (excluded by default).")
+@click.option("--show-missing", is_flag=True, default=False, help="List every undocumented item, not just a sample.")
+@click.option("--json", "as_json", is_flag=True, default=False, help="Emit the report as JSON.")
+@click.option("--limit", type=int, default=10, show_default=True, help="Sampled missing items to show per dimension.")
+def coverage(
+    codebase_dir: str,
+    doc_paths: tuple[str, ...],
+    fail_under: float | None,
+    include_private: bool,
+    include_tests: bool,
+    show_missing: bool,
+    as_json: bool,
+    limit: int,
+):
+    """Report how much of the codebase the documentation actually covers.
+
+    Compares the real API surface against what the docs mention: docstrings on
+    public symbols, environment variables the code reads, CLI flags it defines,
+    and detected technologies. Entirely offline and deterministic.
+
+    \b
+    Examples:
+      opendocs coverage .
+      opendocs coverage . --docs README.md --docs docs/guide.md
+      opendocs coverage . --show-missing
+      opendocs coverage . --fail-under 80     # CI gate
+      opendocs coverage . --json
+    """
+    import json as _json
+
+    from .core.coverage import analyse_coverage
+
+    try:
+        report = analyse_coverage(
+            codebase_dir,
+            list(doc_paths) or None,
+            include_private=include_private,
+            include_tests=include_tests,
+        )
+    except Exception as exc:
+        console.print(f"[bold red]Coverage analysis failed:[/] {exc}")
+        raise SystemExit(2) from exc
+
+    if as_json:
+        console.print_json(_json.dumps(report.to_dict()))
+    else:
+        _print_coverage(report, show_missing=show_missing, limit=limit)
+
+    if fail_under is not None and report.overall < fail_under:
+        if not as_json:
+            console.print(f"[bold red]FAIL[/] coverage {report.overall}% is below --fail-under {fail_under}%\n")
+        raise SystemExit(1)
+
+
+def _print_coverage(report, *, show_missing: bool, limit: int) -> None:
+    """Render a coverage report as a table plus optional detail."""
+    from rich.table import Table as RichTable
+
+    def _colour(pct: float) -> str:
+        return "green" if pct >= 80 else "yellow" if pct >= 50 else "red"
+
+    console.print(f"\n[bold]Documentation coverage[/] [dim]{report.project_name}[/]")
+    if report.docs_analysed:
+        console.print(f"[dim]checked against: {', '.join(report.docs_analysed)}[/]")
+    else:
+        console.print("[yellow]No documentation files found — nothing to check against.[/]")
+
+    table = RichTable(show_lines=False)
+    table.add_column("Dimension", style="bold")
+    table.add_column("Covered", justify="right")
+    table.add_column("Total", justify="right")
+    table.add_column("Coverage", justify="right")
+
+    for dim in report.dimensions:
+        if not dim.applicable:
+            table.add_row(dim.name, "-", "0", "[dim]n/a[/]")
+            continue
+        table.add_row(
+            dim.name,
+            str(dim.covered),
+            str(dim.total),
+            f"[{_colour(dim.percent)}]{dim.percent}%[/]",
+        )
+    console.print(table)
+
+    overall = report.overall
+    console.print(f"  [bold]Overall: [{_colour(overall)}]{overall}%[/][/]\n")
+
+    for dim in report.applicable_dimensions:
+        if not dim.missing:
+            continue
+        shown = dim.missing if show_missing else dim.missing[:limit]
+        console.print(f"[bold]Undocumented — {dim.name}[/] [dim]({len(dim.missing)})[/]")
+        for item in shown:
+            console.print(f"  [red]-[/] {item}")
+        if len(dim.missing) > len(shown):
+            console.print(f"  [dim]... {len(dim.missing) - len(shown)} more (use --show-missing)[/]")
+        console.print()
+
+
+@main.command()
 @click.option("--clear", "do_clear", is_flag=True, default=False, help="Delete every cached artifact.")
 @click.option("--cache-dir", "cache_dir", type=click.Path(), default=None, help="Cache location to inspect.")
 def cache(do_clear: bool, cache_dir: str | None):
