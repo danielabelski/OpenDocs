@@ -7,12 +7,16 @@ on:
       - "src/**/*.py"
       - "tests/**/*.py"
       - "pyproject.toml"
+      - "README.md"
+      - ".github/workflows/quality.yml"
   pull_request:
     branches: [main]
     paths:
       - "src/**/*.py"
       - "tests/**/*.py"
       - "pyproject.toml"
+      - "README.md"
+      - ".github/workflows/quality.yml"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -41,3 +45,25 @@ jobs:
 
       - name: Format check (ruff format)
         run: ruff format --check src/ tests/
+
+  docs:
+    name: Documentation lint
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install package
+        run: pip install -e .
+
+      # Dogfooding: OpenDocs gates its own README with the linter it ships.
+      # Link checking is left off so a third-party outage cannot fail the build.
+      - name: Lint README
+        run: opendocs lint ./README.md --local

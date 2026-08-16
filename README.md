@@ -129,6 +129,49 @@ opendocs generate ./README.md --local --mode llm --provider anthropic
 opendocs themes
 ```
 
+### Linting Documentation in CI
+
+`opendocs lint` checks documentation quality and exits non-zero when it
+regresses, so a pull request can fail on a broken README the same way it fails
+on a broken test:
+
+```bash
+opendocs lint ./README.md --local                      # errors fail the build
+opendocs lint ./README.md --local --fail-on warning    # be stricter
+opendocs lint ./README.md --local --fail-on never      # report only
+opendocs lint ./README.md --local --json               # machine-readable
+opendocs lint https://github.com/owner/repo --check-links
+```
+
+All rules run offline; `--check-links` is the only one that uses the network.
+
+| Rule | Severity | Catches |
+|------|----------|---------|
+| `no-title` | error | No level-1 heading to use as a title |
+| `no-description` | error | No prose at all, only headings and code |
+| `placeholder` | error | Unreplaced template text (`your-project-name`, `CHANGEME`) |
+| `dead-link` | error | 4xx links (`--check-links`) |
+| `missing-installation` / `missing-usage` / `missing-license` | warning | Conventional section absent |
+| `thin-content` | warning | Fewer than 50 words of prose |
+| `todo-marker` | warning | `TODO` / `FIXME` / `TBD` left in published docs |
+| `ragged-table` | warning | Table rows that do not match the header, so it silently renders as plain text |
+| `image-no-alt` | warning | Images without alt text |
+| `heading-jump` | info | Heading levels skipping (H2 to H4) |
+| `duplicate-heading` | info | The same heading repeated at one level |
+| `unlabelled-code` | info | Fenced code with no language annotation |
+
+Use it in a workflow:
+
+```yaml
+- name: Lint documentation
+  run: |
+    pip install opendocs
+    opendocs lint ./README.md --local
+```
+
+Exit codes: `0` clean, `1` findings at or above `--fail-on`, `2` the source
+could not be read.
+
 ### Querying a Graph Later
 
 `opendocs generate` writes a `graph.json` alongside the documents. `opendocs

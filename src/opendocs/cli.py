@@ -934,6 +934,104 @@ def finetune(
 
 
 @main.command()
+@click.argument("source", metavar="SOURCE")
+@click.option("--local", is_flag=True, default=False, help="Treat SOURCE as a local file path.")
+@click.option("--token", envvar="GITHUB_TOKEN", default=None, help="GitHub token for remote sources.")
+@click.option(
+    "--fail-on",
+    type=click.Choice(["error", "warning", "info", "never"], case_sensitive=False),
+    default="error",
+    show_default=True,
+    help="Lowest severity that should make the command exit non-zero.",
+)
+@click.option("--check-links", is_flag=True, default=False, help="Also request every external link (uses network).")
+@click.option("--include-badges", is_flag=True, default=False, help="Include badge/shield URLs in link checking.")
+@click.option("--link-timeout", type=float, default=10.0, show_default=True, help="Per-link timeout in seconds.")
+@click.option("--json", "as_json", is_flag=True, default=False, help="Emit findings as JSON.")
+def lint(
+    source: str,
+    local: bool,
+    token: str | None,
+    fail_on: str,
+    check_links: bool,
+    include_badges: bool,
+    link_timeout: float,
+    as_json: bool,
+):
+    """Check documentation quality and exit non-zero when it regresses.
+
+    SOURCE is a GitHub URL, a local Markdown file, or a Jupyter Notebook.
+    All rules run offline unless --check-links is passed.
+
+    \b
+    Examples:
+      opendocs lint ./README.md --local
+      opendocs lint ./README.md --local --fail-on warning
+      opendocs lint https://github.com/owner/repo --check-links
+      opendocs lint ./README.md --local --json
+    """
+    import json as _json
+
+    # -- Load and parse the source -------------------------------------
+    from .core.fetcher import ReadmeFetcher, is_github_url
+    from .core.linter import Severity, lint_document
+    from .core.notebook_parser import NotebookParser, is_notebook
+    from .core.parser import ReadmeParser
+
+    try:
+        if is_notebook(source):
+            doc = NotebookParser().parse(source, repo_name=Path(source).stem)
+        else:
+            fetcher = ReadmeFetcher(github_token=token)
+            if local or not is_github_url(source):
+                content, name = fetcher._fetch_local(source)
+            else:
+                content, name = fetcher.fetch(source)
+            doc = ReadmeParser().parse(content, repo_name=name)
+    except Exception as exc:
+        console.print(f"[bold red]Could not read {source}:[/] {exc}")
+        raise SystemExit(2) from exc
+
+    report = lint_document(
+        doc,
+        check_links_too=check_links,
+        link_timeout=link_timeout,
+        include_badges=include_badges,
+    )
+
+    if as_json:
+        console.print_json(_json.dumps(report.to_dict()))
+    else:
+        _print_lint_report(report, source)
+
+    if fail_on.lower() == "never":
+        return
+    raise SystemExit(report.exit_code(fail_on=Severity(fail_on.lower())))
+
+
+def _print_lint_report(report, source: str) -> None:
+    """Render a lint report as grouped, colour-coded output."""
+    styles = {"error": "bold red", "warning": "yellow", "info": "dim cyan"}
+    labels = {"error": "ERROR", "warning": "WARN ", "info": "INFO "}
+
+    console.print(f"\n[bold]Linting[/] {source}")
+
+    if not report.findings:
+        console.print(f"[green]No issues found[/] [dim]({report.checked} checks)[/]\n")
+        return
+
+    for finding in report.findings:
+        sev = finding.severity.value
+        console.print(f"  [{styles[sev]}]{labels[sev]}[/] [bold]{finding.rule}[/]  {finding.message}")
+        if finding.context:
+            console.print(f"          [dim]{finding.context}[/]")
+
+    counts = report.counts()
+    summary = ", ".join(f"{n} {name}{'s' if n != 1 else ''}" for name, n in counts.items() if n)
+    console.print(f"\n[bold]{summary or 'no issues'}[/] [dim]({report.checked} checks)[/]\n")
+
+
+@main.command()
 @click.argument("graph_path", type=click.Path(exists=True), metavar="GRAPH_JSON")
 @click.argument("question", required=False, default=None)
 @click.option("--search", "search_term", default=None, help="Substring search over entity names.")
