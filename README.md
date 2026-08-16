@@ -151,6 +151,24 @@ stored artifact byte for byte; the one thing it does not refresh is the
 generation timestamp, which is what makes identical inputs produce identical
 output.
 
+**LLM responses are cached too.** In `--mode llm`, re-running over an unchanged
+README previously re-paid for every API call. Responses are now stored on disk
+keyed by provider, model, temperature, token limit, and the exact prompt, so a
+repeat run costs nothing and returns instantly:
+
+```bash
+opendocs generate ./README.md --local --mode llm    # first run calls the API
+opendocs generate ./README.md --local --mode llm    # second run is free
+
+export OPENDOCS_LLM_CACHE=0    # disable response caching only
+opendocs generate ./README.md --local --mode llm --no-cache   # disable both
+```
+
+Note this deliberately trades novelty for cost and reproducibility: with
+`temperature > 0` the provider would have returned a *different* answer, and
+you get the earlier one. Change the temperature, the model, or the prompt and
+it re-asks; use `--no-cache` when you specifically want a fresh generation.
+
 ### What Changed Since the Last Release
 
 `opendocs diff` compares two versions of your documentation and reports what

@@ -100,8 +100,42 @@ class LLMProvider(ABC):
 
     # ── Public API ────────────────────────────────────────────────────
 
+    # ── Caching ───────────────────────────────────────────────────────
+
+    def _cache_key(self, system: str, user: str, kind: str) -> str:
+        from .cache import LLMCache
+
+        return LLMCache.make_key(
+            provider=type(self).__name__,
+            model=self.model,
+            system=system,
+            user=user,
+            kind=kind,
+            temperature=self.temperature,
+            max_tokens=self.max_tokens,
+            extra={"base_url": self.base_url or ""},
+        )
+
     def chat(self, system: str, user: str) -> str:
-        """Send a chat completion with retry.  Returns plain text."""
+        """Send a chat completion with retry.  Returns plain text.
+
+        Responses are cached on disk, so repeating a run over unchanged input
+        costs nothing.  Disable with ``OPENDOCS_LLM_CACHE=0``.
+        """
+        from .cache import shared_cache
+
+        cache = shared_cache()
+        key = self._cache_key(system, user, "text")
+        cached = cache.get(key)
+        if cached is not None:
+            return cached
+
+        result = self._chat_uncached(system, user)
+        cache.put(key, result, meta={"model": self.model, "provider": type(self).__name__})
+        return result
+
+    def _chat_uncached(self, system: str, user: str) -> str:
+        """Send a chat completion with retry, bypassing the cache."""
         last_exc: Exception | None = None
         for attempt in range(self.max_retries):
             try:
@@ -124,12 +158,47 @@ class LLMProvider(ABC):
 
         Each provider implements its own JSON-mode strategy.
         Falls back to parsing raw text as JSON.
+
+        The *raw* response is cached rather than the parsed object, so the
+        stored entry stays a faithful record of what the provider returned and
+        parsing improvements apply to previously cached responses.
         """
+        from .cache import shared_cache
+
+        cache = shared_cache()
+        key = self._cache_key(system, user, "json")
+        cached = cache.get(key)
+        if cached is not None:
+            try:
+                return self._parse_json(cached)
+            except Exception as exc:
+                # A cached response we can no longer parse is worthless; fall
+                # through and ask the provider again.
+                logger.debug("Cached JSON response failed to parse (%s); re-requesting", exc)
+
+        raw_holder: dict[str, str] = {}
+        parsed = self._chat_json_uncached(system, user, raw_holder)
+        if "raw" in raw_holder:
+            cache.put(key, raw_holder["raw"], meta={"model": self.model, "provider": type(self).__name__})
+        return parsed
+
+    def _chat_json_uncached(
+        self,
+        system: str,
+        user: str,
+        raw_holder: dict[str, str] | None = None,
+    ) -> dict[str, Any]:
+        """Send a JSON-mode completion with retry, bypassing the cache."""
         last_exc: Exception | None = None
         for attempt in range(self.max_retries):
             try:
                 raw = self._call_json(system, user)
-                return self._parse_json(raw)
+                parsed = self._parse_json(raw)
+                # Only expose the raw text once it is known to parse, so an
+                # unparseable response is never written to the cache.
+                if raw_holder is not None:
+                    raw_holder["raw"] = raw
+                return parsed
             except json.JSONDecodeError as exc:
                 last_exc = exc
                 logger.warning("JSON parse failed (attempt %d): %s", attempt + 1, exc)

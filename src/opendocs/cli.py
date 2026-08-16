@@ -161,7 +161,7 @@ def main():
     "no_cache",
     is_flag=True,
     default=False,
-    help="Ignore the build cache and regenerate every format from scratch.",
+    help="Ignore all caches (generated artifacts and LLM responses) and rebuild from scratch.",
 )
 @click.option(
     "--cache-dir",
@@ -297,8 +297,11 @@ def generate(
 
     # Run pipeline — folder path or single file/URL
     from .core.build_cache import BuildCache
+    from .llm.cache import LLMCache, reset_shared_cache
 
     build_cache = BuildCache(cache_dir, enabled=not no_cache)
+    # --no-cache means "don't reuse anything", so it covers LLM responses too.
+    reset_shared_cache(LLMCache(Path(cache_dir) / "llm" if cache_dir else None, enabled=not no_cache))
 
     pipeline = Pipeline(github_token=token)
     source_path = Path(source)
@@ -967,20 +970,26 @@ def cache(do_clear: bool, cache_dir: str | None):
       opendocs cache --clear    # empty it
     """
     from .core.build_cache import BuildCache
+    from .llm.cache import LLMCache
 
     store = BuildCache(cache_dir)
+    llm_store = LLMCache(Path(cache_dir) / "llm" if cache_dir else None)
 
     if do_clear:
-        removed = store.clear()
-        console.print(f"[green][OK][/] Cleared {removed} cached artifact(s) from {store.dir}")
+        artifacts = store.clear()
+        responses = llm_store.clear()
+        console.print(f"[green][OK][/] Cleared {artifacts} artifact(s) and {responses} LLM response(s)")
         return
 
-    size = store.size_bytes()
-    entries = len(list(store.dir.glob("*/*/manifest.json"))) if store.dir.exists() else 0
-    console.print(f"\n[bold]Build cache[/] [dim]{store.dir}[/]")
-    console.print(f"  entries: {entries}")
-    console.print(f"  size:    {size / 1024 / 1024:.1f} MB" if size else "  size:    empty")
-    console.print("\n[dim]Clear it with `opendocs cache --clear`.[/]\n")
+    def _describe(label: str, path, entries: int, size: int) -> None:
+        console.print(f"\n[bold]{label}[/] [dim]{path}[/]")
+        console.print(f"  entries: {entries}")
+        console.print(f"  size:    {size / 1024 / 1024:.1f} MB" if size else "  size:    empty")
+
+    build_entries = len(list(store.dir.glob("*/*/manifest.json"))) if store.dir.exists() else 0
+    _describe("Build cache", store.dir, build_entries, store.size_bytes())
+    _describe("LLM response cache", llm_store.dir, llm_store.entry_count(), llm_store.size_bytes())
+    console.print("\n[dim]Clear both with `opendocs cache --clear`.[/]\n")
 
 
 @main.command()
