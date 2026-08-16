@@ -129,6 +129,42 @@ opendocs generate ./README.md --local --mode llm --provider anthropic
 opendocs themes
 ```
 
+### Querying a Graph Later
+
+`opendocs generate` writes a `graph.json` alongside the documents. `opendocs
+query` answers questions about it without re-processing the source — no LLM,
+no API key, no network:
+
+```bash
+# Overview: top entities and suggested questions
+opendocs query output/myproject_graph.json
+
+# Structural queries
+opendocs query graph.json --stats
+opendocs query graph.json --list-types
+opendocs query graph.json --search redis
+opendocs query graph.json --entity "PostgreSQL"
+opendocs query graph.json --dependents "PostgreSQL"    # what would be affected
+opendocs query graph.json --dependencies "API Gateway" # what it relies on
+opendocs query graph.json --neighbors "Redis"
+opendocs query graph.json --path "API Gateway" "S3"    # how two things connect
+opendocs query graph.json --type database
+opendocs query graph.json --community 2
+opendocs query graph.json --provenance AMBIGUOUS       # review low-confidence finds
+opendocs query graph.json --god-nodes
+
+# Plain-English questions, answered from graph structure
+opendocs query graph.json "what depends on Redis?"
+opendocs query graph.json "how are the API and S3 connected?"
+opendocs query graph.json "which databases are used?"
+```
+
+Add `--json` to any query for machine-readable output, and `--limit N` to
+control how many rows come back.
+
+Exit codes make it scriptable: `0` success, `1` the query matched nothing,
+`2` the graph file could not be read.
+
 ### Offline / Air-Gapped Use
 
 The interactive knowledge graph normally loads vis.js from a CDN. To produce a

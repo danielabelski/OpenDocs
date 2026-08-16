@@ -933,5 +933,295 @@ def finetune(
         raise SystemExit(1)
 
 
+@main.command()
+@click.argument("graph_path", type=click.Path(exists=True), metavar="GRAPH_JSON")
+@click.argument("question", required=False, default=None)
+@click.option("--search", "search_term", default=None, help="Substring search over entity names.")
+@click.option("--entity", default=None, help="Show one entity with its incoming and outgoing relations.")
+@click.option("--neighbors", "neighbors_of", default=None, help="Entities directly connected to this one.")
+@click.option("--dependents", default=None, help="Entities that point at this one (what would be affected).")
+@click.option("--dependencies", default=None, help="Entities this one points at (what it relies on).")
+@click.option("--path", "path_ends", nargs=2, default=None, help="Shortest path between two entities.")
+@click.option("--type", "entity_type", default=None, help="List all entities of a type (e.g. database).")
+@click.option("--community", "community_id", type=int, default=None, help="List members of a community.")
+@click.option("--provenance", default=None, help="Filter by EXTRACTED, INFERRED, or AMBIGUOUS.")
+@click.option("--god-nodes", "show_god_nodes", is_flag=True, help="Highest-degree hub entities.")
+@click.option("--list-types", "list_types", is_flag=True, help="Show entity and relation type counts.")
+@click.option("--questions", "show_questions", is_flag=True, help="Show the stored suggested questions.")
+@click.option("--stats", "show_stats", is_flag=True, help="Show graph statistics.")
+@click.option("--json", "as_json", is_flag=True, help="Emit machine-readable JSON instead of tables.")
+@click.option("--limit", type=int, default=25, show_default=True, help="Maximum rows to display.")
+def query(
+    graph_path: str,
+    question: str | None,
+    search_term: str | None,
+    entity: str | None,
+    neighbors_of: str | None,
+    dependents: str | None,
+    dependencies: str | None,
+    path_ends: tuple[str, str] | None,
+    entity_type: str | None,
+    community_id: int | None,
+    provenance: str | None,
+    show_god_nodes: bool,
+    list_types: bool,
+    show_questions: bool,
+    show_stats: bool,
+    as_json: bool,
+    limit: int,
+):
+    """Query an exported graph.json without re-processing the source.
+
+    GRAPH_JSON is a graph file produced by a previous `opendocs generate` run.
+    Everything here works offline — no LLM, no API key, no network.
+
+    \b
+    Examples:
+      opendocs query graph.json --stats
+      opendocs query graph.json --search redis
+      opendocs query graph.json --entity "PostgreSQL"
+      opendocs query graph.json --dependents "PostgreSQL"
+      opendocs query graph.json --path "API" "S3"
+      opendocs query graph.json --type database
+      opendocs query graph.json "what depends on Redis?"
+    """
+    from .core.graph_query import GraphQuery, GraphQueryError, nodes_to_dicts
+
+    try:
+        graph = GraphQuery.load(graph_path)
+    except GraphQueryError as exc:
+        console.print(f"[bold red]Error:[/] {exc}")
+        raise SystemExit(2) from exc
+
+    try:
+        _run_query(
+            graph,
+            question=question,
+            search_term=search_term,
+            entity=entity,
+            neighbors_of=neighbors_of,
+            dependents=dependents,
+            dependencies=dependencies,
+            path_ends=path_ends,
+            entity_type=entity_type,
+            community_id=community_id,
+            provenance=provenance,
+            show_god_nodes=show_god_nodes,
+            list_types=list_types,
+            show_questions=show_questions,
+            show_stats=show_stats,
+            as_json=as_json,
+            limit=limit,
+            nodes_to_dicts=nodes_to_dicts,
+        )
+    except GraphQueryError as exc:
+        console.print(f"[bold red]Error:[/] {exc}")
+        raise SystemExit(1) from exc
+
+
+def _node_table(title: str, nodes, limit: int):
+    """Render entities as a Rich table."""
+    from rich.table import Table as RichTable
+
+    table = RichTable(title=title, show_lines=False, title_justify="left")
+    table.add_column("Name", style="bold cyan")
+    table.add_column("Type", style="magenta")
+    table.add_column("Degree", justify="right")
+    table.add_column("Community", justify="right")
+    table.add_column("Provenance", style="dim")
+    for n in nodes[:limit]:
+        table.add_row(n.name, n.type.replace("_", " "), str(n.degree), str(n.community), n.provenance)
+    return table
+
+
+def _run_query(graph, **opts):
+    """Dispatch a single query mode and print the result."""
+    import json as _json
+
+    as_json = opts["as_json"]
+    limit = opts["limit"]
+    nodes_to_dicts = opts["nodes_to_dicts"]
+
+    def emit_nodes(title, nodes):
+        if as_json:
+            console.print_json(_json.dumps({"query": title, "results": nodes_to_dicts(nodes[:limit])}))
+        else:
+            if not nodes:
+                console.print(f"[yellow]No results for:[/] {title}")
+                return
+            console.print(_node_table(title, nodes, limit))
+            if len(nodes) > limit:
+                console.print(f"[dim]... {len(nodes) - limit} more (raise --limit to see them)[/dim]")
+
+    # -- Metadata modes -------------------------------------------------
+    if opts["show_stats"]:
+        stats = {"project": graph.project_name, "generated_at": graph.generated_at, **graph.stats}
+        if as_json:
+            console.print_json(_json.dumps(stats))
+        else:
+            from rich.table import Table as RichTable
+
+            table = RichTable(title=f"{graph.project_name} — graph statistics", title_justify="left")
+            table.add_column("Metric", style="bold")
+            table.add_column("Value", justify="right")
+            for key, value in stats.items():
+                table.add_row(str(key).replace("_", " "), str(value))
+            console.print(table)
+        return
+
+    if opts["list_types"]:
+        payload = {"entity_types": graph.entity_types(), "relation_types": graph.relation_types()}
+        if as_json:
+            console.print_json(_json.dumps(payload))
+        else:
+            from rich.table import Table as RichTable
+
+            table = RichTable(title="Entity types", title_justify="left")
+            table.add_column("Type", style="bold cyan")
+            table.add_column("Count", justify="right")
+            for key, count in payload["entity_types"].items():
+                table.add_row(key.replace("_", " "), str(count))
+            console.print(table)
+
+            table2 = RichTable(title="Relation types", title_justify="left")
+            table2.add_column("Relation", style="bold magenta")
+            table2.add_column("Count", justify="right")
+            for key, count in payload["relation_types"].items():
+                table2.add_row(key.replace("_", " "), str(count))
+            console.print(table2)
+        return
+
+    if opts["show_questions"]:
+        questions = graph.suggested_questions()
+        if as_json:
+            console.print_json(_json.dumps({"suggested_questions": questions}))
+        else:
+            console.print("[bold]Questions this graph can answer:[/]")
+            for i, q in enumerate(questions, 1):
+                console.print(f"  [cyan]{i}.[/] {q}")
+        return
+
+    # -- Entity modes ---------------------------------------------------
+    if opts["show_god_nodes"]:
+        emit_nodes("God nodes (highest degree)", graph.god_nodes(top_n=limit))
+        return
+
+    if opts["search_term"]:
+        emit_nodes(f"Search: {opts['search_term']!r}", graph.search(opts["search_term"], limit=limit))
+        return
+
+    if opts["entity_type"]:
+        emit_nodes(f"Type: {opts['entity_type']}", graph.of_type(opts["entity_type"]))
+        return
+
+    if opts["provenance"]:
+        emit_nodes(f"Provenance: {opts['provenance'].upper()}", graph.by_provenance(opts["provenance"]))
+        return
+
+    if opts["community_id"] is not None:
+        emit_nodes(f"Community {opts['community_id']}", graph.community_members(opts["community_id"]))
+        return
+
+    if opts["neighbors_of"]:
+        emit_nodes(f"Neighbors of {opts['neighbors_of']!r}", graph.neighbors(opts["neighbors_of"]))
+        return
+
+    if opts["dependents"]:
+        emit_nodes(f"Depends on {opts['dependents']!r}", graph.dependents_of(opts["dependents"]))
+        return
+
+    if opts["dependencies"]:
+        emit_nodes(f"{opts['dependencies']!r} relies on", graph.dependencies_of(opts["dependencies"]))
+        return
+
+    if opts["entity"]:
+        node = graph.resolve(opts["entity"])
+        outgoing = graph.outgoing(node.name)
+        incoming = graph.incoming(node.name)
+        if as_json:
+            console.print_json(
+                _json.dumps(
+                    {
+                        "entity": nodes_to_dicts([node])[0],
+                        "outgoing": [{"relation": e.relation, "target": t.name} for e, t in outgoing],
+                        "incoming": [{"relation": e.relation, "source": s.name} for e, s in incoming],
+                    }
+                )
+            )
+        else:
+            console.print(f"\n[bold cyan]{node.name}[/]  [dim]({node.type.replace('_', ' ')})[/]")
+            console.print(
+                f"[dim]degree {node.degree} | community {node.community} | "
+                f"{node.provenance} | confidence {node.confidence:.0%}[/]"
+            )
+            if node.source_section:
+                console.print(f"[dim]found in section: {node.source_section}[/]")
+            if outgoing:
+                console.print("\n[bold]Points at:[/]")
+                for e, t in outgoing[:limit]:
+                    console.print(f"  [green]--{e.relation.replace('_', ' ')}-->[/] {t.name}")
+            if incoming:
+                console.print("\n[bold]Pointed at by:[/]")
+                for e, s in incoming[:limit]:
+                    console.print(f"  {s.name} [green]--{e.relation.replace('_', ' ')}-->[/]")
+            if not outgoing and not incoming:
+                console.print("\n[yellow]No relations recorded for this entity.[/]")
+        return
+
+    if opts["path_ends"]:
+        start, end = opts["path_ends"]
+        hops = graph.path(start, end)
+        if as_json:
+            console.print_json(
+                _json.dumps(
+                    {
+                        "start": start,
+                        "end": end,
+                        "hops": [{"from": h.frm.name, "relation": h.edge.relation, "to": h.to.name} for h in hops],
+                    }
+                )
+            )
+        elif not hops:
+            console.print(f"[yellow]No path found between {start!r} and {end!r}.[/]")
+        else:
+            console.print(f"\n[bold]Path ({len(hops)} hop(s)):[/]")
+            console.print(f"  [cyan]{hops[0].frm.name}[/]")
+            for h in hops:
+                arrow = "<--" if h.reversed_ else "-->"
+                console.print(f"    [green]{arrow} {h.edge.relation.replace('_', ' ')} {arrow}[/] [cyan]{h.to.name}[/]")
+        return
+
+    # -- Natural-language fallback --------------------------------------
+    if opts["question"]:
+        answer = graph.answer(opts["question"])
+        if as_json:
+            console.print_json(_json.dumps(answer.to_dict()))
+            return
+        if answer.hops:
+            console.print(f"\n[dim]{answer.summary}[/]")
+            console.print(f"  [cyan]{answer.hops[0].frm.name}[/]")
+            for h in answer.hops:
+                arrow = "<--" if h.reversed_ else "-->"
+                console.print(f"    [green]{arrow} {h.edge.relation.replace('_', ' ')} {arrow}[/] [cyan]{h.to.name}[/]")
+        elif answer.nodes:
+            # The summary is the table title; printing it separately duplicates it.
+            console.print(_node_table(answer.summary, answer.nodes, limit))
+        else:
+            console.print(f"\n[dim]{answer.summary}[/]")
+            console.print("[yellow]No matching entities. Try --search or --list-types.[/]")
+        return
+
+    # -- Nothing selected: show an overview ------------------------------
+    console.print(f"\n[bold]{graph.project_name}[/] [dim]graph exported {graph.generated_at or 'unknown'}[/]")
+    console.print(f"[dim]{len(graph.nodes)} entities, {len(graph.edges)} relations[/]\n")
+    console.print(_node_table("Top entities", graph.god_nodes(top_n=limit), limit))
+    questions = graph.suggested_questions()
+    if questions:
+        console.print("\n[bold]Try asking:[/]")
+        for q in questions[:3]:
+            console.print(f"  [dim]-[/] {q}")
+    console.print("\n[dim]Run `opendocs query --help` for all query modes.[/]")
+
+
 if __name__ == "__main__":
     main()
