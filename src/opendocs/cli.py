@@ -934,6 +934,143 @@ def finetune(
 
 
 @main.command()
+@click.argument("old", metavar="OLD")
+@click.argument("new", metavar="NEW")
+@click.option(
+    "--git",
+    "git_repo",
+    type=click.Path(exists=True, file_okay=False),
+    default=None,
+    help="Treat OLD and NEW as git revisions of --path inside this repository.",
+)
+@click.option(
+    "--path",
+    "git_file",
+    default="README.md",
+    show_default=True,
+    help="File to compare when --git is used.",
+)
+@click.option(
+    "--format",
+    "out_format",
+    type=click.Choice(["markdown", "json", "summary"], case_sensitive=False),
+    default="summary",
+    show_default=True,
+    help="Output style: a short summary, full release notes, or JSON.",
+)
+@click.option("-o", "--output", "output_file", type=click.Path(), default=None, help="Write the result to a file.")
+@click.option("--title", default="Documentation Changes", help="Heading for generated release notes.")
+@click.option(
+    "--fail-on-change",
+    is_flag=True,
+    default=False,
+    help="Exit non-zero when anything changed (for CI drift detection).",
+)
+def diff(
+    old: str,
+    new: str,
+    git_repo: str | None,
+    git_file: str,
+    out_format: str,
+    output_file: str | None,
+    title: str,
+    fail_on_change: bool,
+):
+    """Report what changed between two versions of documentation.
+
+    OLD and NEW are Markdown files, notebooks, or exported graph.json files.
+    With --git they are treated as git revisions of --path instead.
+
+    \b
+    Examples:
+      opendocs diff old/README.md new/README.md
+      opendocs diff v1_graph.json v2_graph.json
+      opendocs diff v0.8.0 HEAD --git . --path README.md
+      opendocs diff v0.8.0 HEAD --git . --format markdown -o RELEASE_NOTES.md
+      opendocs diff a.md b.md --fail-on-change      # CI drift gate
+    """
+    import json as _json
+
+    from .core.doc_diff import (
+        diff_snapshots,
+        impacted_formats,
+        render_release_notes,
+        snapshot_from_git,
+        snapshot_from_path,
+    )
+
+    try:
+        if git_repo:
+            old_snap = snapshot_from_git(git_repo, old, git_file)
+            new_snap = snapshot_from_git(git_repo, new, git_file)
+        else:
+            old_snap = snapshot_from_path(old)
+            new_snap = snapshot_from_path(new)
+    except Exception as exc:
+        console.print(f"[bold red]Could not load sources:[/] {exc}")
+        raise SystemExit(2) from exc
+
+    delta = diff_snapshots(old_snap, new_snap)
+
+    if out_format.lower() == "json":
+        payload = {**delta.to_dict(), "impacted_formats": impacted_formats(delta)}
+        rendered = _json.dumps(payload, indent=2)
+        if output_file:
+            Path(output_file).write_text(rendered, encoding="utf-8")
+            console.print(f"[green][OK][/] Wrote {output_file}")
+        else:
+            console.print_json(rendered)
+    elif out_format.lower() == "markdown":
+        rendered = render_release_notes(delta, title=title)
+        if output_file:
+            Path(output_file).write_text(rendered, encoding="utf-8")
+            console.print(f"[green][OK][/] Wrote {output_file}")
+        else:
+            console.print(rendered)
+    else:
+        _print_diff_summary(delta, impacted_formats(delta))
+        if output_file:
+            Path(output_file).write_text(render_release_notes(delta, title=title), encoding="utf-8")
+            console.print(f"[green][OK][/] Wrote {output_file}")
+
+    if fail_on_change and not delta.is_empty:
+        raise SystemExit(1)
+
+
+def _print_diff_summary(delta, formats: list[str]) -> None:
+    """Render a delta as a compact terminal summary."""
+    console.print(f"\n[bold]{delta.old_label}[/] [dim]->[/] [bold]{delta.new_label}[/]")
+
+    if delta.is_empty:
+        console.print("[green]No documentation changes detected.[/]\n")
+        return
+
+    counts = delta.counts()
+    rows = [
+        ("Sections added", counts["sections_added"], "green"),
+        ("Sections removed", counts["sections_removed"], "red"),
+        ("Concepts added", counts["entities_added"], "green"),
+        ("Concepts removed", counts["entities_removed"], "red"),
+        ("Concepts reclassified", counts["entities_retyped"], "yellow"),
+        ("Relations added", counts["relations_added"], "green"),
+        ("Relations removed", counts["relations_removed"], "red"),
+    ]
+    console.print()
+    for label, count, colour in rows:
+        if count:
+            console.print(f"  [{colour}]{count:>4}[/] {label}")
+
+    for section in [s for s in delta.sections if s.change == "added"][:10]:
+        console.print(f"    [green]+[/] section: {section.title}")
+    for section in [s for s in delta.sections if s.change == "removed"][:10]:
+        console.print(f"    [red]-[/] section: {section.title}")
+
+    if formats:
+        console.print(f"\n[dim]Worth regenerating:[/] {', '.join(formats)}")
+    console.print()
+
+
+@main.command()
 @click.argument("source", metavar="SOURCE")
 @click.option("--local", is_flag=True, default=False, help="Treat SOURCE as a local file path.")
 @click.option("--token", envvar="GITHUB_TOKEN", default=None, help="GitHub token for remote sources.")

@@ -129,6 +129,35 @@ opendocs generate ./README.md --local --mode llm --provider anthropic
 opendocs themes
 ```
 
+### What Changed Since the Last Release
+
+`opendocs diff` compares two versions of your documentation and reports what
+moved — new and removed sections, concepts, and relationships — then renders
+it as release notes. Deterministic and offline.
+
+```bash
+# Two files
+opendocs diff old/README.md new/README.md
+
+# Two git revisions of the same file
+opendocs diff v0.8.0 HEAD --git . --path README.md
+
+# Two previously exported graphs
+opendocs diff v1_graph.json v2_graph.json
+
+# Draft release notes
+opendocs diff v0.8.0 HEAD --git . --format markdown -o RELEASE_NOTES.md
+
+# Machine-readable, including which formats are worth regenerating
+opendocs diff old.md new.md --format json
+
+# CI gate: fail if documentation drifted
+opendocs diff committed.md generated.md --fail-on-change
+```
+
+The summary also reports which output formats are worth regenerating, so a
+docs pipeline can rebuild only what the change actually affects.
+
 ### Linting Documentation in CI
 
 `opendocs lint` checks documentation quality and exits non-zero when it
